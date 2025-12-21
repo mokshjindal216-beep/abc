@@ -1,9 +1,7 @@
 # config.py
 import os
 
-# The script will read these from the GitHub Secrets (Environment Variables)
-# Do NOT hardcode your keys here for the public file.
-
+# Keys are loaded securely from GitHub Secrets
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
