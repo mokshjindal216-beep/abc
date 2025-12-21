@@ -1,14 +1,5 @@
 # newsroom.py
-import os
-import time
-import requests
-import textwrap
-import json
-import numpy as np
-import cloudinary
-import cloudinary.uploader
-import config_v2 as config
-import difflib
+import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, config_v2 as config, difflib
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip, AudioFileClip
 from groq import Groq
@@ -17,153 +8,104 @@ from newspaper import Article
 from duckduckgo_search import DDGS
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+cloudinary.config(cloud_name=config.CLOUDINARY_CLOUD_NAME, api_key=config.CLOUDINARY_API_KEY, api_secret=config.CLOUDINARY_API_SECRET)
 
-cloudinary.config(
-  cloud_name = config.CLOUDINARY_CLOUD_NAME,
-  api_key = config.CLOUDINARY_API_KEY,
-  api_secret = config.CLOUDINARY_API_SECRET
-)
+# 50 PREMIER SOURCES
+PREMIUM_SOURCES = ["reuters", "associated-press", "bbc-news", "cnn", "bloomberg", "the-wall-street-journal", "the-washington-post", "time", "wired", "the-verge", "techcrunch", "business-insider", "fortune", "cnbc", "abc-news", "cbs-news", "nbc-news", "politico", "axios", "the-hill", "usa-today", "the-independent", "the-telegraph", "france-24", "dw-news", "scmp", "the-hindu", "the-times-of-india", "variety", "hollywood-reporter", "rolling-stone", "ign", "espn", "bleacher-report", "national-geographic", "new-scientist", "scientific-american", "nature", "the-economist", "hacker-news", "ars-technica", "engadget", "gizmodo", "mashable", "vox", "new-york-magazine", "the-atlantic"]
 
-PREMIUM_SOURCES = ["reuters", "associated-press", "bloomberg", "bbc-news", "cnn", "the-wall-street-journal", "the-washington-post", "time", "wired", "the-verge", "techcrunch", "business-insider"]
+def log(step, msg): print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔹 {step}: {msg}")
 
-def log(step, message):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔹 {step}: {message}")
-
-# --- RESTORED TELEGRAM ---
-def send_telegram(message):
-    try:
-        url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": config.TELEGRAM_ADMIN_ID, "text": message, "parse_mode": "Markdown"}
-        requests.post(url, data=payload, timeout=10)
+def send_telegram(msg):
+    try: requests.post(f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": config.TELEGRAM_ADMIN_ID, "text": msg, "parse_mode": "Markdown"}, timeout=5)
     except: pass
 
 def ensure_assets():
     os.makedirs('assets/audio', exist_ok=True)
-    if not os.path.exists("assets/audio/track.mp3"):
-        os.system("wget -q -O assets/audio/track.mp3 https://github.com/rafaelreis-hotmart/Audio-Sample-files/raw/master/sample.mp3")
-    if not os.path.exists("Anton.ttf"):
-        os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
+    tracks = {"crisis": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", "tech": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", "general": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"}
+    for n, u in tracks.items():
+        if not os.path.exists(f"assets/audio/{n}.mp3"): os.system(f"wget -q -O assets/audio/{n}.mp3 {u}")
+    if not os.path.exists("Anton.ttf"): os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
 
-def get_best_groq_model(client):
-    try:
-        models = client.models.list()
-        for m in models.data:
-            if "llama-3.3-70b" in m.id: return m.id
-        return "llama-3.3-70b-versatile"
-    except: return "llama-3.3-70b-versatile"
-
-# --- REFINED AD-BLOCKER ---
-def is_duplicate_or_ad(title):
-    t_low = title.lower()
-    # Only block "gift" if it's paired with shopping words
-    shopping_triggers = ["buy", "shop", "deals", "save", "under $", "gift guide", "discount"]
-    if any(x in t_low for x in shopping_triggers):
-        log("FILTER", f"❌ Shopping Ad blocked: {title}")
-        return True
-    
+def is_garbage(title):
+    t = title.lower()
+    # Refined: Only block shopping guides, not news about gifts/trials
+    ads = ["gift guide", "buying guide", "deals under", "best deals", "save $", "shop the", "top picks for christmas"]
+    if any(x in t for x in ads): return True
     if not os.path.exists("history_v2.txt"): return False
     with open("history_v2.txt", "r") as f:
-        history = [line.strip().split("|")[0] for line in f if "|" in line]
-    for old in history:
-        if difflib.SequenceMatcher(None, title.lower(), old.lower()).ratio() > 0.8:
-            return True
+        for l in f:
+            if difflib.SequenceMatcher(None, t, l.split("|")[0].lower()).ratio() > 0.8: return True
     return False
 
-# --- STEP 1: SOURCING ---
 def fetch_news():
-    log("NEWS", "Sourcing Premium Hard News...")
-    candidates = []
-    try:
-        sources = ",".join(PREMIUM_SOURCES[:10])
-        url = f"https://newsapi.org/v2/top-headlines?sources={sources}&apiKey={config.NEWS_API_KEY}"
-        data = requests.get(url, timeout=20).json()
-        if data.get('status') == 'ok':
-            for art in data.get('articles', []):
-                if art.get('urlToImage') and not is_duplicate_or_ad(art['title']):
-                    candidates.append(art)
-    except: pass
-    return candidates[:10]
+    log("NEWS", "Sourcing...")
+    cands = []
+    for i in range(0, 30, 15):
+        try:
+            r = requests.get(f"https://newsapi.org/v2/top-headlines?sources={','.join(PREMIUM_SOURCES[i:i+15])}&apiKey={config.NEWS_API_KEY}", timeout=15).json()
+            if r.get('status') == 'ok': cands.extend([a for a in r['articles'] if a.get('urlToImage') and not is_garbage(a['title'])])
+        except: pass
+    return cands[:15]
 
-# --- STEP 2: RESEARCH & AI ---
-def perform_research(article):
-    try:
-        art = Article(article['url'])
-        art.download(); art.parse()
-        if len(art.text) > 400: return art.text[:2000]
-    except: pass
-    try:
-        with DDGS() as ddgs:
-            return "\n".join([r['body'] for r in ddgs.text(article['title'], max_results=3)])
-    except: return article.get('description', '')
-
-def generate_content(article, context):
+def generate_content(art):
     client = Groq(api_key=config.GROQ_API_KEY)
-    model = get_best_groq_model(client)
+    model = "llama-3.3-70b-versatile"
+    with DDGS() as ddgs:
+        ctx = "\n".join([r['body'] for r in ddgs.text(art['title'], max_results=2)])
     
-    # 1. VIDEO JSON
-    video_prompt = f"Analyze: {article['title']}\nContext: {context}\nReturn ONLY JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", \"headline\": \"5-8 words\", \"summary\": \"max 20 words\"}}"
-    v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":video_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
+    # ENFORCED CONTENT-BASED MOOD
+    v_prompt = f"Analyze CONTENT of news: {art['title']}\nContext: {ctx}\nReturn JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", \"headline\": \"5-8 words\", \"summary\": \"20 words UNIQUE facts NOT in headline\"}}"
+    v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
-    # 2. CAPTION
-    cap_prompt = f"Write a viral IG caption with a hook, 3 bullets, a question, and 5 hashtags for: {article['title']}"
-    caption = client.chat.completions.create(messages=[{"role":"user","content":cap_prompt}], model=model).choices[0].message.content.strip()
+    cap_prompt = f"Write viral IG caption (Hook, 3 bullets, question, 5 tags) for: {art['title']}"
+    caption = client.chat.completions.create(messages=[{"role":"user","content":cap_prompt}], model=model).choices[0].message.content.strip() + "\n.\n.\n#news #breakingnews #viral"
     
-    # 3. DEEP DIVE
-    div_prompt = f"Write a 250-word analytical deep dive starting with '🧠 DEEP DIVE:' for: {article['title']}\nContext: {context}"
+    div_prompt = f"250-word deep dive starting with '🧠 DEEP DIVE:' for: {art['title']}\nContext: {ctx}"
     comment = client.chat.completions.create(messages=[{"role":"user","content":div_prompt}], model=model).choices[0].message.content.strip()
     
     return v_data['mood'], v_data['headline'], v_data['summary'], caption, comment
 
-# --- STEP 3: RENDERER ---
 def fit_text(draw, text, max_w, max_h, start_size):
     size = start_size
-    while size > 20:
+    while size > 25:
         font = ImageFont.truetype("Anton.ttf", size)
         lines = textwrap.wrap(text, width=int(max_w/(size*0.55)))
-        th = sum([draw.textbbox((0,0), l, font=font)[3] - draw.textbbox((0,0), l, font=font)[1] + 12 for l in lines])
+        th = sum([draw.textbbox((0,0), l, font=font)[3] - draw.textbbox((0,0), l, font=font)[1] + 15 for l in lines])
         if th < max_h: return font, lines
-        size -= 5
-    return ImageFont.truetype("Anton.ttf", 20), textwrap.wrap(text, width=25)
+        size -= 4
+    return ImageFont.truetype("Anton.ttf", 25), textwrap.wrap(text, width=28)
 
-def render_video(article, mood, hl, summ):
+def render_video(art, mood, hl, summ):
     ensure_assets()
-    color = "#FFD700" 
-    if mood == "CRISIS": color = "#FF0000"
-    elif mood == "TECH": color = "#00F0FF"
-    
+    cfg = {"crisis": {"c": "#FF0000", "a": "assets/audio/crisis.mp3"}, "tech": {"c": "#00F0FF", "a": "assets/audio/tech.mp3"}, "general": {"c": "#FFD700", "a": "assets/audio/general.mp3"}}.get(mood.lower(), {"c": "#FFD700", "a": "assets/audio/general.mp3"})
     try:
-        r = requests.get(article['urlToImage'], timeout=20)
+        r = requests.get(art['urlToImage'], timeout=15)
         with open("bg.jpg", "wb") as f: f.write(r.content)
         W, H = 1080, 1920
         overlay = Image.new('RGBA', (W, H), (0,0,0,0))
         draw = ImageDraw.Draw(overlay)
-        
-        # UI Darken
         grad = Image.new('L', (W, H), 0)
-        for y in range(int(H*0.4), H): ImageDraw.Draw(grad).line([(0,y),(W,y)], fill=int((y-H*0.4)/(H*0.6)*255))
-        overlay.paste(Image.new('RGBA',(W,H),(0,0,0,230)), (0,0), mask=grad)
-        draw = ImageDraw.Draw(overlay)
-
-        # Source
+        for y in range(int(H*0.45), H): ImageDraw.Draw(grad).line([(0,y),(W,y)], fill=int((y-H*0.45)/(H*0.55)*255))
+        overlay.paste(Image.new('RGBA',(W,H),(0,0,0,240)), (0,0), mask=grad)
+        
+        # Source - FIXED fill argument
         f_s = ImageFont.truetype("Anton.ttf", 35)
-        sn = f" {article['source']['name'].upper()} "
-        draw.rounded_rectangle([(60,150), (60+draw.textlength(sn, f_s)+20, 210)], 12, fill=color)
+        sn = f" {art['source']['name'].upper()} "
+        draw.rounded_rectangle([(60,150), (60+draw.textlength(sn, f_s)+20, 210)], 12, fill=cfg["c"])
         draw.text((70,160), sn, font=f_s, fill="black")
         
-        # Headline
-        f_h, h_l = fit_text(draw, hl.upper(), 900, 400, 100)
-        curr_y = 850
+        # Headline & Summary
+        f_h, h_l = fit_text(draw, hl.upper(), 900, 450, 110)
+        cy = 880
         for l in h_l:
-            draw.text((65, curr_y+5), l, font=f_h, fill="black")
-            draw.text((60, curr_y), l, font=f_h, fill=color)
-            curr_y += f_h.size + 15
-        
-        # Summary
-        f_u, s_l = fit_text(draw, summ, 900, 1350-curr_y, 55)
-        curr_y += 20
+            draw.text((65, cy+5), l, font=f_h, fill="black")
+            draw.text((60, cy), l, font=f_h, fill=cfg["c"])
+            cy += f_h.size + 15
+        f_u, s_l = fit_text(draw, summ, 900, 1450-cy, 55)
+        cy += 20
         for l in s_l:
-            draw.text((60, curr_y), l, font=f_u, fill="white")
-            curr_y += f_u.size + 10
+            draw.text((60, cy), l, font=f_u, fill="white")
+            cy += f_u.size + 12
             
         overlay.save("overlay.png")
         img = Image.open("bg.jpg").convert("RGB")
@@ -176,48 +118,42 @@ def render_video(article, mood, hl, summ):
             nh = bw/ratio
             img = img.crop((0, (bh-nh)/2, bw, (bh-nh)/2 + nh))
         img.resize((1080, 1920), Image.LANCZOS).save("temp_bg.jpg")
-        
         clip = ImageClip("temp_bg.jpg").set_duration(6).fl(lambda gf, t: np.array(Image.fromarray(gf(t)).resize([int(d*(1+0.04*t)) for d in Image.fromarray(gf(t)).size], Image.BILINEAR).crop((0,0,1080,1920))))
         final = CompositeVideoClip([clip, ImageClip("overlay.png").set_duration(6)])
-        if os.path.exists("assets/audio/track.mp3"): final = final.set_audio(AudioFileClip("assets/audio/track.mp3").subclip(0,6))
-        
+        if os.path.exists(cfg["a"]): final = final.set_audio(AudioFileClip(cfg["a"]).subclip(0,6))
         final.write_videofile("final.mp4", fps=24, codec='libx264', audio_codec='aac', preset='ultrafast', logger=None)
         return "final.mp4"
-    except Exception as e: return None
+    except: return None
 
-# --- STEP 4: PUBLISH ---
-def publish(video_path, caption, comment):
+def publish(path, cap, comm):
     try:
-        up = cloudinary.uploader.upload(video_path, resource_type="video")
-        url = f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media"
-        res = requests.post(url, data={"media_type": "REELS", "video_url": up['secure_url'], "caption": caption, "access_token": config.IG_ACCESS_TOKEN}).json()
-        if 'id' not in res: return False
-        
-        cid = res['id']
-        for _ in range(20):
+        up = cloudinary.uploader.upload(path, resource_type="video")
+        r = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media", data={"media_type": "REELS", "video_url": up['secure_url'], "caption": cap, "access_token": config.IG_ACCESS_TOKEN}).json()
+        if 'id' not in r: return False
+        cid = r['id']
+        for _ in range(15):
             time.sleep(10)
-            status = requests.get(f"https://graph.facebook.com/v18.0/{cid}", params={"fields":"status_code", "access_token": config.IG_ACCESS_TOKEN}).json()
-            if status.get('status_code') == 'FINISHED':
-                pub = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media_publish", data={"creation_id": cid, "access_token": config.IG_ACCESS_TOKEN}).json()
-                if 'id' in pub:
+            s = requests.get(f"https://graph.facebook.com/v18.0/{cid}", params={"fields":"status_code", "access_token": config.IG_ACCESS_TOKEN}).json()
+            if s.get('status_code') == 'FINISHED':
+                p = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media_publish", data={"creation_id": cid, "access_token": config.IG_ACCESS_TOKEN}).json()
+                if 'id' in p:
                     time.sleep(10)
-                    requests.post(f"https://graph.facebook.com/v18.0/{pub['id']}/comments", data={"message": comment, "access_token": config.IG_ACCESS_TOKEN})
-                    send_telegram(f"✅ *Newsroom V2 Live!*\n{caption[:100]}...")
+                    requests.post(f"https://graph.facebook.com/v18.0/{p['id']}/comments", data={"message": comm, "access_token": config.IG_ACCESS_TOKEN})
+                    send_telegram(f"✅ *V2 Live:* {cap[:100]}...")
                     return True
         return False
     except: return False
 
 if __name__ == "__main__":
     ensure_assets()
-    log("BOT", "Starting Fixed Newsroom V2...")
-    articles = fetch_news()
-    for art in articles:
-        log("BOT", f"Trying: {art['title']}")
+    log("BOT", "V2 Running...")
+    arts = fetch_news()
+    for a in arts:
+        log("BOT", f"Try: {a['title']}")
         try:
-            ctx = perform_research(art)
-            mood, hl, summ, cap, comm = generate_content(art, ctx)
-            video = render_video(art, mood, hl, summ)
-            if video and publish(video, cap, comm):
-                with open("history_v2.txt", "a") as f: f.write(f"{art['title']}|{art['url']}\n")
+            m, h, s, cp, cm = generate_content(a)
+            v = render_video(a, m, h, s)
+            if v and publish(v, cp, cm):
+                with open("history_v2.txt", "a") as f: f.write(f"{a['title']}|{a['url']}\n")
                 break
-        except Exception as e: log("ERROR", f"Loop: {e}")
+        except Exception as e: log("ERROR", e)
