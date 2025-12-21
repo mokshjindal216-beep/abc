@@ -4,6 +4,7 @@ import time
 import requests
 import textwrap
 import random
+import numpy as np  # <--- FIXED: Added missing NumPy import
 import cloudinary
 import cloudinary.uploader
 import config
@@ -112,7 +113,7 @@ def pick_viral_winner(articles):
         return articles[idx] if idx < len(articles) else articles[0]
     except: return articles[0]
 
-# --- CONTENT GENERATOR (REFINED CAPTIONS) ---
+# --- CONTENT GENERATOR ---
 def generate_content(article):
     client = Groq(api_key=config.GROQ_API_KEY)
     model = "llama-3.3-70b-versatile"
@@ -120,7 +121,6 @@ def generate_content(article):
     hl = client.chat.completions.create(messages=[{"role":"user","content":f"Viral 5-8 word headline for: '{article['title']}'. UPPERCASE. No quotes. Aggressive."}], model=model).choices[0].message.content.strip().replace('"','')
     summ = client.chat.completions.create(messages=[{"role":"user","content":f"Summarize in MAX 25 words. Article: '{article['title']}'. Text only."}], model=model).choices[0].message.content.strip()
     
-    # --- REFINED CAPTION PROMPT ---
     caption_prompt = f"""
     Write a clean, readable Instagram Caption for: '{article['title']}'.
     
