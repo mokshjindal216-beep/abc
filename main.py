@@ -7,6 +7,7 @@ import random
 import cloudinary
 import cloudinary.uploader
 import config
+import numpy as np  # <--- THIS WAS MISSING
 from PIL import Image, ImageDraw, ImageFont
 from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip, AudioFileClip
 from groq import Groq
@@ -163,7 +164,7 @@ def create_video(article, headline, summary):
     # Source Pill
     source = f"  {article['source']['name'].upper()}  "
     font_src = get_font("body", 35)
-    w = draw.textlength(source, font=font_src)
+    w = draw.textlength(source, font_src)
     draw.rounded_rectangle([(60, 150), (60+w+20, 210)], radius=12, fill="#FFD700")
     draw.text((70, 160), source, font=font_src, fill="black")
 
@@ -199,6 +200,8 @@ def create_video(article, headline, summary):
     img_pil.save("temp_bg.jpg")
 
     img = ImageClip("temp_bg.jpg").set_duration(6)
+    
+    # --- ZOOM EFFECT (Now works because numpy is imported) ---
     img = img.fl(lambda gf, t: np.array(Image.fromarray(gf(t)).resize([int(d*(1+0.04*t)) for d in Image.fromarray(gf(t)).size], Image.BILINEAR).crop((0,0,1080,1920))))
 
     track = "assets/audio/track.mp3"
