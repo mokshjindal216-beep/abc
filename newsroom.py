@@ -10,7 +10,6 @@ from duckduckgo_search import DDGS
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 cloudinary.config(cloud_name=config.CLOUDINARY_CLOUD_NAME, api_key=config.CLOUDINARY_API_KEY, api_secret=config.CLOUDINARY_API_SECRET)
 
-# 50 PREMIER SOURCES
 PREMIUM_SOURCES = ["reuters", "associated-press", "bbc-news", "cnn", "bloomberg", "the-wall-street-journal", "the-washington-post", "time", "wired", "the-verge", "techcrunch", "business-insider", "fortune", "cnbc", "abc-news", "cbs-news", "nbc-news", "politico", "axios", "the-hill", "usa-today", "the-independent", "the-telegraph", "france-24", "dw-news", "scmp", "the-hindu", "the-times-of-india", "variety", "hollywood-reporter", "rolling-stone", "ign", "espn", "bleacher-report", "national-geographic", "new-scientist", "scientific-american", "nature", "the-economist", "hacker-news", "ars-technica", "engadget", "gizmodo", "mashable", "vox", "new-york-magazine", "the-atlantic"]
 
 GENERIC_TAGS = "#news #breakingnews #viral #trending"
@@ -23,7 +22,6 @@ def send_telegram(msg):
 
 def ensure_assets():
     os.makedirs('assets/audio', exist_ok=True)
-    # MOOD AUDIO TRACKS
     tracks = {
         "crisis": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", 
         "tech": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", 
@@ -33,22 +31,16 @@ def ensure_assets():
         if not os.path.exists(f"assets/audio/{n}.mp3"): os.system(f"wget -q -O assets/audio/{n}.mp3 {u}")
     if not os.path.exists("Anton.ttf"): os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
 
-# DYNAMIC MODEL SELECTOR (Asks Groq what it has)
 def get_best_groq_model(client):
     try:
         models = client.models.list()
-        # Prefer 70b Llama 3.3
         for m in models.data:
             if "llama-3.3-70b" in m.id: return m.id
-        # Fallback to 3.1
-        for m in models.data:
-            if "llama-3.1-70b" in m.id: return m.id
-        return "llama3-70b-8192"
+        return "llama-3.3-70b-versatile"
     except: return "llama-3.3-70b-versatile"
 
 def is_garbage(title):
     t = title.lower()
-    # Context-aware ad filter
     ads = ["gift guide", "buying guide", "deals under", "best deals", "save $", "shop the", "top picks for christmas"]
     if any(x in t for x in ads): return True
     if not os.path.exists("history_v2.txt"): return False
@@ -67,38 +59,23 @@ def fetch_news():
         except: pass
     return cands[:15]
 
-# --- RESEARCH ENGINE (Scrape -> Fallback to Search) ---
 def perform_research(article):
     log("RESEARCH", f"Analyzing: {article['title']}")
-    
-    # 1. Try Scraping
     try:
         art = Article(article['url'])
-        art.download()
-        art.parse()
-        if len(art.text) > 500:
-            log("RESEARCH", "Scraped article text successfully.")
-            return art.text[:2500]
+        art.download(); art.parse()
+        if len(art.text) > 500: return art.text[:2500]
     except: pass
-    
-    # 2. Fallback to Search
-    log("RESEARCH", "Scrape failed/blocked. Switching to DuckDuckGo Search...")
     try:
         with DDGS() as ddgs:
-            results = list(ddgs.text(article['title'], max_results=3))
-            summary = "\n".join([res['body'] for res in results])
-            log("RESEARCH", "Search context retrieved.")
-            return summary
-    except: 
-        log("WARN", "Search failed. Using description only.")
-        return article.get('description', '')
+            return "\n".join([r['body'] for r in ddgs.text(article['title'], max_results=3)])
+    except: return article.get('description', '')
 
 def generate_content(art, ctx):
     client = Groq(api_key=config.GROQ_API_KEY)
     model = get_best_groq_model(client)
-    log("AI", f"Using Model: {model}")
     
-    # MOOD ANALYSIS + STRICT LIMITS
+    # STRICT JSON - 20-25 WORDS
     v_prompt = f"Analyze: {art['title']}\nContext: {ctx}\nReturn JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", \"headline\": \"5-8 words\", \"summary\": \"EXACTLY 20-25 words UNIQUE facts\"}}"
     v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
@@ -115,6 +92,7 @@ def fit_text(draw, text, max_w, max_h, start_size):
     while size > 25:
         font = ImageFont.truetype("Anton.ttf", size)
         lines = textwrap.wrap(text, width=int(max_w/(size*0.55)))
+        # Calculate true height of the text block
         th = sum([draw.textbbox((0,0), l, font=font)[3] - draw.textbbox((0,0), l, font=font)[1] + 15 for l in lines])
         if th < max_h: return font, lines
         size -= 4
@@ -122,8 +100,6 @@ def fit_text(draw, text, max_w, max_h, start_size):
 
 def render_video(art, mood, hl, summ):
     ensure_assets()
-    
-    # MOOD CONFIG (Color AND Audio)
     cfg = {
         "crisis": {"c": "#FF0000", "a": "assets/audio/crisis.mp3"}, 
         "tech": {"c": "#00F0FF", "a": "assets/audio/tech.mp3"}, 
@@ -152,19 +128,23 @@ def render_video(art, mood, hl, summ):
         draw.rounded_rectangle([(60,150), (60+draw.textlength(sn, f_s)+20, 210)], 12, fill=cfg["c"])
         draw.text((70,160), sn, font=f_s, fill="black")
         
-        f_h, h_l = fit_text(draw, hl.upper(), 900, 450, 110)
+        # --- HEADLINE: Start Aggressive (140px) ---
+        f_h, h_l = fit_text(draw, hl.upper(), 900, 450, 140)
         cy = 880
         for l in h_l:
             draw.text((65, cy+5), l, font=f_h, fill="black")
             draw.text((60, cy), l, font=f_h, fill=cfg["c"])
             cy += f_h.size + 15
         
-        # SAFE ZONE ENFORCED (Y=1344)
+        # --- SUMMARY: Start Aggressive (100px) ---
+        # The code will try 100px first. If it doesn't fit the Safe Zone, 
+        # it will shrink until it does. This guarantees MAX usage of space.
         SAFE_LIMIT = 1344
-        f_u, s_l = fit_text(draw, summ, 900, SAFE_LIMIT-cy, 55)
+        f_u, s_l = fit_text(draw, summ, 900, SAFE_LIMIT-cy, 100)
+        
         cy += 20
         for l in s_l:
-            if cy > SAFE_LIMIT: break # CUTOFF PROTECTION
+            if cy > SAFE_LIMIT: break 
             draw.text((60, cy), l, font=f_u, fill="white")
             cy += f_u.size + 12
             
@@ -207,7 +187,6 @@ def publish(path, cap, comm):
         return False
     except: return False
 
-# RESTORED MAIN LOOP WITH RESEARCH
 if __name__ == "__main__":
     ensure_assets()
     log("BOT", "V2 Running...")
@@ -217,16 +196,9 @@ if __name__ == "__main__":
         for i, art in enumerate(cands):
             log("BOT", f"Candidate #{i+1}: {art['title']}")
             try:
-                # 1. Research (Scrape or Search)
                 ctx = perform_research(art)
-                
-                # 2. AI Content (Mood, Text, Deep Dive)
                 m, h, s, cp, cm = generate_content(art, ctx)
-                
-                # 3. Render (Audio, Color, Safe Zone)
                 v = render_video(art, m, h, s)
-                
-                # 4. Publish
                 if v and publish(v, cp, cm):
                     with open("history_v2.txt", "a") as f: f.write(f"{art['title']}|{art['url']}\n")
                     log("SUCCESS", "Done.")
