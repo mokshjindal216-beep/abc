@@ -26,11 +26,16 @@ cloudinary.config(
 
 PREMIUM_SOURCES = ["reuters", "associated-press", "bloomberg", "bbc-news", "cnn", "the-wall-street-journal", "the-washington-post", "time", "wired", "the-verge", "techcrunch", "business-insider"]
 
-# --- NEW: THE AD-BLOCKER ---
-AD_KEYWORDS = ["deal", "gift", "guide", "buying", "review", "save", "sale", "best of", "how to"]
-
 def log(step, message):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔹 {step}: {message}")
+
+# --- RESTORED TELEGRAM ---
+def send_telegram(message):
+    try:
+        url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {"chat_id": config.TELEGRAM_ADMIN_ID, "text": message, "parse_mode": "Markdown"}
+        requests.post(url, data=payload, timeout=10)
+    except: pass
 
 def ensure_assets():
     os.makedirs('assets/audio', exist_ok=True)
@@ -47,13 +52,15 @@ def get_best_groq_model(client):
         return "llama-3.3-70b-versatile"
     except: return "llama-3.3-70b-versatile"
 
+# --- REFINED AD-BLOCKER ---
 def is_duplicate_or_ad(title):
-    # Check for Ads
-    if any(word in title.lower() for word in AD_KEYWORDS):
-        log("FILTER", f"❌ Ad/Guide detected: {title}")
+    t_low = title.lower()
+    # Only block "gift" if it's paired with shopping words
+    shopping_triggers = ["buy", "shop", "deals", "save", "under $", "gift guide", "discount"]
+    if any(x in t_low for x in shopping_triggers):
+        log("FILTER", f"❌ Shopping Ad blocked: {title}")
         return True
     
-    # Check for Duplicate
     if not os.path.exists("history_v2.txt"): return False
     with open("history_v2.txt", "r") as f:
         history = [line.strip().split("|")[0] for line in f if "|" in line]
@@ -77,28 +84,32 @@ def fetch_news():
     except: pass
     return candidates[:10]
 
-# --- STEP 2: AI BRAIN (JSON ONLY) ---
-def generate_content(article):
+# --- STEP 2: RESEARCH & AI ---
+def perform_research(article):
+    try:
+        art = Article(article['url'])
+        art.download(); art.parse()
+        if len(art.text) > 400: return art.text[:2000]
+    except: pass
+    try:
+        with DDGS() as ddgs:
+            return "\n".join([r['body'] for r in ddgs.text(article['title'], max_results=3)])
+    except: return article.get('description', '')
+
+def generate_content(article, context):
     client = Groq(api_key=config.GROQ_API_KEY)
     model = get_best_groq_model(client)
     
-    # 1. VIDEO CONTENT (STRICT JSON)
-    video_prompt = f"""
-    Analyze this news: {article['title']}
-    Return ONLY a JSON object with:
-    "mood": (CRISIS, TECH, or GENERAL),
-    "headline": (5-8 word punchy headline),
-    "summary": (Max 20 word summary)
-    """
-    res = client.chat.completions.create(messages=[{"role":"user","content":video_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content
-    v_data = json.loads(res)
+    # 1. VIDEO JSON
+    video_prompt = f"Analyze: {article['title']}\nContext: {context}\nReturn ONLY JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", \"headline\": \"5-8 words\", \"summary\": \"max 20 words\"}}"
+    v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":video_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
-    # 2. CAPTION (STRICT)
-    cap_prompt = f"Write a viral IG caption for: {article['title']}. Use a hook, 3 bullets, a question, and 5 hashtags."
+    # 2. CAPTION
+    cap_prompt = f"Write a viral IG caption with a hook, 3 bullets, a question, and 5 hashtags for: {article['title']}"
     caption = client.chat.completions.create(messages=[{"role":"user","content":cap_prompt}], model=model).choices[0].message.content.strip()
     
-    # 3. DEEP DIVE (STRICT)
-    div_prompt = f"Write a 250-word deep dive analysis about this news starting with '🧠 DEEP DIVE:': {article['title']}"
+    # 3. DEEP DIVE
+    div_prompt = f"Write a 250-word analytical deep dive starting with '🧠 DEEP DIVE:' for: {article['title']}\nContext: {context}"
     comment = client.chat.completions.create(messages=[{"role":"user","content":div_prompt}], model=model).choices[0].message.content.strip()
     
     return v_data['mood'], v_data['headline'], v_data['summary'], caption, comment
@@ -106,41 +117,40 @@ def generate_content(article):
 # --- STEP 3: RENDERER ---
 def fit_text(draw, text, max_w, max_h, start_size):
     size = start_size
-    font = ImageFont.truetype("Anton.ttf", size)
     while size > 20:
+        font = ImageFont.truetype("Anton.ttf", size)
         lines = textwrap.wrap(text, width=int(max_w/(size*0.55)))
-        th = sum([draw.textbbox((0,0), l, font=font)[3] + 10 for l in lines])
+        th = sum([draw.textbbox((0,0), l, font=font)[3] - draw.textbbox((0,0), l, font=font)[1] + 12 for l in lines])
         if th < max_h: return font, lines
         size -= 5
-        font = ImageFont.truetype("Anton.ttf", size)
-    return font, textwrap.wrap(text, width=25)
+    return ImageFont.truetype("Anton.ttf", 20), textwrap.wrap(text, width=25)
 
 def render_video(article, mood, hl, summ):
     ensure_assets()
-    color = "#FFD700" # General
+    color = "#FFD700" 
     if mood == "CRISIS": color = "#FF0000"
-    if mood == "TECH": color = "#00F0FF"
+    elif mood == "TECH": color = "#00F0FF"
     
     try:
         r = requests.get(article['urlToImage'], timeout=20)
         with open("bg.jpg", "wb") as f: f.write(r.content)
-        
         W, H = 1080, 1920
         overlay = Image.new('RGBA', (W, H), (0,0,0,0))
         draw = ImageDraw.Draw(overlay)
         
-        # Gradient
+        # UI Darken
         grad = Image.new('L', (W, H), 0)
         for y in range(int(H*0.4), H): ImageDraw.Draw(grad).line([(0,y),(W,y)], fill=int((y-H*0.4)/(H*0.6)*255))
-        overlay.alpha_composite(Image.new('RGBA',(W,H),(0,0,0,220)), dest=(0,0), source=(0,0)) # Simplified darken
-        
+        overlay.paste(Image.new('RGBA',(W,H),(0,0,0,230)), (0,0), mask=grad)
+        draw = ImageDraw.Draw(overlay)
+
         # Source
         f_s = ImageFont.truetype("Anton.ttf", 35)
         sn = f" {article['source']['name'].upper()} "
         draw.rounded_rectangle([(60,150), (60+draw.textlength(sn, f_s)+20, 210)], 12, fill=color)
         draw.text((70,160), sn, font=f_s, fill="black")
         
-        # Text
+        # Headline
         f_h, h_l = fit_text(draw, hl.upper(), 900, 400, 100)
         curr_y = 850
         for l in h_l:
@@ -148,6 +158,7 @@ def render_video(article, mood, hl, summ):
             draw.text((60, curr_y), l, font=f_h, fill=color)
             curr_y += f_h.size + 15
         
+        # Summary
         f_u, s_l = fit_text(draw, summ, 900, 1350-curr_y, 55)
         curr_y += 20
         for l in s_l:
@@ -155,8 +166,15 @@ def render_video(article, mood, hl, summ):
             curr_y += f_u.size + 10
             
         overlay.save("overlay.png")
-        # Ken Burns Resize
         img = Image.open("bg.jpg").convert("RGB")
+        bw, bh = img.size
+        ratio = 1080/1920
+        if bw/bh > ratio:
+            nw = bh * ratio
+            img = img.crop(((bw-nw)/2, 0, (bw+nw)/2, bh))
+        else:
+            nh = bw/ratio
+            img = img.crop((0, (bh-nh)/2, bw, (bh-nh)/2 + nh))
         img.resize((1080, 1920), Image.LANCZOS).save("temp_bg.jpg")
         
         clip = ImageClip("temp_bg.jpg").set_duration(6).fl(lambda gf, t: np.array(Image.fromarray(gf(t)).resize([int(d*(1+0.04*t)) for d in Image.fromarray(gf(t)).size], Image.BILINEAR).crop((0,0,1080,1920))))
@@ -165,9 +183,7 @@ def render_video(article, mood, hl, summ):
         
         final.write_videofile("final.mp4", fps=24, codec='libx264', audio_codec='aac', preset='ultrafast', logger=None)
         return "final.mp4"
-    except Exception as e:
-        log("ERROR", f"Render: {e}")
-        return None
+    except Exception as e: return None
 
 # --- STEP 4: PUBLISH ---
 def publish(video_path, caption, comment):
@@ -186,6 +202,7 @@ def publish(video_path, caption, comment):
                 if 'id' in pub:
                     time.sleep(10)
                     requests.post(f"https://graph.facebook.com/v18.0/{pub['id']}/comments", data={"message": comment, "access_token": config.IG_ACCESS_TOKEN})
+                    send_telegram(f"✅ *Newsroom V2 Live!*\n{caption[:100]}...")
                     return True
         return False
     except: return False
@@ -197,10 +214,10 @@ if __name__ == "__main__":
     for art in articles:
         log("BOT", f"Trying: {art['title']}")
         try:
-            mood, hl, summ, cap, comm = generate_content(art)
+            ctx = perform_research(art)
+            mood, hl, summ, cap, comm = generate_content(art, ctx)
             video = render_video(art, mood, hl, summ)
             if video and publish(video, cap, comm):
                 with open("history_v2.txt", "a") as f: f.write(f"{art['title']}|{art['url']}\n")
-                log("SUCCESS", "Reel Live.")
                 break
         except Exception as e: log("ERROR", f"Loop: {e}")
