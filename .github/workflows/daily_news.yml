@@ -2,7 +2,7 @@ name: Hourly Viral News Bot
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Run every hour
+    - cron: '0 * * * *'  # Runs every hour
   workflow_dispatch:      # Manual trigger
 
 jobs:
@@ -21,6 +21,7 @@ jobs:
           sudo apt-get install -y imagemagick ffmpeg ghostscript fonts-dejavu-core
           sudo sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml
 
+      # Smart Cache: Saves Fonts/Audio so they are only downloaded once
       - name: Cache Assets
         id: cache-assets
         uses: actions/cache@v3
@@ -41,7 +42,6 @@ jobs:
         run: |
           pip install groq moviepy==1.0.3 numpy Pillow==9.5.0 imageio_ffmpeg requests google-generativeai cloudinary
 
-      # ⚠️ THIS SECTION IS CRITICAL: It passes the secrets to your script
       - name: Run Bot
         env:
           NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
