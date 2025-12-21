@@ -14,11 +14,13 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # Essential for rebasing
 
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y imagemagick ffmpeg ghostscript fonts-dejavu-core
+          sudo apt-get install -y imagemagick ffmpeg ghostscript fonts-dejavu-core libavcodec-extra
           sudo sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml
 
       - name: Cache Assets
@@ -27,8 +29,8 @@ jobs:
           path: |
             assets/audio
             Anton.ttf
-          key: assets-v6-${{ hashFiles('newsroom.py') }}
-          restore-keys: assets-v6-
+          key: assets-v7-${{ hashFiles('newsroom.py') }}
+          restore-keys: assets-v7-
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -57,7 +59,10 @@ jobs:
         run: |
           git config --global user.name "NewsAI"
           git config --global user.email "bot@noreply.github.com"
-          git pull origin main --rebase || echo "Already up to date"
           git add history_v2.txt || echo "No history"
-          git commit -m "Log V2" || echo "No changes"
+          git stash # Temporarily hide changes to allow pull
+          git pull origin main --rebase
+          git stash pop || echo "Nothing to pop"
+          git add history_v2.txt
+          git commit -m "Update Newsroom History" || echo "No changes"
           git push origin main
