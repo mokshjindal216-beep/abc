@@ -1,9 +1,9 @@
 name: Newsroom V2 Test
 
 on:
-  workflow_dispatch:      # Click "Run Workflow" to test
+  workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'   # Runs hourly
+    - cron: '0 * * * *'
 
 jobs:
   run-newsroom:
@@ -41,7 +41,6 @@ jobs:
 
       - name: Run V2 Bot
         env:
-          # MAPPING EXISTING SECRETS TO THE NEW BOT
           NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
           GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -54,10 +53,11 @@ jobs:
           TELEGRAM_ADMIN_ID: ${{ secrets.TELEGRAM_ADMIN_ID }}
         run: python newsroom.py
         
-      - name: Save V2 History
+      - name: Sync and Save V2 History
         run: |
           git config --global user.name "NewsAI"
           git config --global user.email "bot@noreply.github.com"
+          git pull origin main --rebase || echo "Already up to date"
           git add history_v2.txt || echo "No history"
           git commit -m "Log V2" || echo "No changes"
-          git push
+          git push origin main
