@@ -7,7 +7,6 @@ import random
 import cloudinary
 import cloudinary.uploader
 import config
-import numpy as np  # <--- THIS WAS MISSING
 from PIL import Image, ImageDraw, ImageFont
 from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip, AudioFileClip
 from groq import Groq
@@ -45,15 +44,11 @@ def save_to_history(url):
 
 # --- ASSET MANAGER ---
 def ensure_assets():
-    # 1. Audio
     os.makedirs('assets/audio', exist_ok=True)
     if not os.path.exists("assets/audio/track.mp3"):
-        log("ASSETS", "Downloading Audio (First Run Only)...")
+        log("ASSETS", "Downloading Audio...")
         os.system("wget -q -O assets/audio/track.mp3 https://github.com/rafaelreis-hotmart/Audio-Sample-files/raw/master/sample.mp3")
-    else:
-        log("ASSETS", "Audio found in cache.")
-
-    # 2. Fonts (Backup)
+    
     if not os.path.exists("Anton.ttf"):
         log("ASSETS", "Downloading Backup Font...")
         os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
@@ -117,7 +112,7 @@ def pick_viral_winner(articles):
         return articles[idx] if idx < len(articles) else articles[0]
     except: return articles[0]
 
-# --- CONTENT GENERATOR ---
+# --- CONTENT GENERATOR (REFINED CAPTIONS) ---
 def generate_content(article):
     client = Groq(api_key=config.GROQ_API_KEY)
     model = "llama-3.3-70b-versatile"
@@ -125,20 +120,27 @@ def generate_content(article):
     hl = client.chat.completions.create(messages=[{"role":"user","content":f"Viral 5-8 word headline for: '{article['title']}'. UPPERCASE. No quotes. Aggressive."}], model=model).choices[0].message.content.strip().replace('"','')
     summ = client.chat.completions.create(messages=[{"role":"user","content":f"Summarize in MAX 25 words. Article: '{article['title']}'. Text only."}], model=model).choices[0].message.content.strip()
     
+    # --- REFINED CAPTION PROMPT ---
     caption_prompt = f"""
-    Write an engaging Instagram Caption for: '{article['title']}'.
-    Structure:
-    1. A catchy hook sentence.
-    2. THREE bullet points (•) summarizing insights.
-    3. A question for the audience.
-    4. 5 viral hashtags.
-    No intro text.
+    Write a clean, readable Instagram Caption for: '{article['title']}'.
+    
+    FORMATTING RULES:
+    1. Start with a 1-sentence "Hook" that makes people stop scrolling. Use an emoji (🚨, ⚠️, or 🔥).
+    2. Add a blank line.
+    3. Write "👇 THE BREAKDOWN:"
+    4. Provide 3 short bullet points (•) explaining why this matters.
+    5. Add a blank line.
+    6. Write "💭 THOUGHTS?" and ask a question.
+    7. Add a blank line.
+    8. Add 5-7 viral hashtags at the bottom.
+    
+    Make it visually spacious. Do NOT use long paragraphs.
     """
     caption = client.chat.completions.create(messages=[{"role":"user","content":caption_prompt}], model=model).choices[0].message.content.strip()
     
     return hl, summ, caption
 
-# --- VIDEO ENGINE (Fast Zoom + Safe Layout) ---
+# --- VIDEO ENGINE ---
 def create_video(article, headline, summary):
     log("VIDEO", "Rendering...")
     ensure_assets()
@@ -164,7 +166,7 @@ def create_video(article, headline, summary):
     # Source Pill
     source = f"  {article['source']['name'].upper()}  "
     font_src = get_font("body", 35)
-    w = draw.textlength(source, font_src)
+    w = draw.textlength(source, font=font_src)
     draw.rounded_rectangle([(60, 150), (60+w+20, 210)], radius=12, fill="#FFD700")
     draw.text((70, 160), source, font=font_src, fill="black")
 
@@ -187,6 +189,7 @@ def create_video(article, headline, summary):
     
     overlay.save("overlay.png")
 
+    # Image Prep
     img_pil = Image.open("bg.jpg").convert("RGB")
     base_w, base_h = img_pil.size
     ratio = 1080/1920
@@ -199,9 +202,8 @@ def create_video(article, headline, summary):
     img_pil = img_pil.resize((1080, 1920), Image.LANCZOS)
     img_pil.save("temp_bg.jpg")
 
+    # Video Render
     img = ImageClip("temp_bg.jpg").set_duration(6)
-    
-    # --- ZOOM EFFECT (Now works because numpy is imported) ---
     img = img.fl(lambda gf, t: np.array(Image.fromarray(gf(t)).resize([int(d*(1+0.04*t)) for d in Image.fromarray(gf(t)).size], Image.BILINEAR).crop((0,0,1080,1920))))
 
     track = "assets/audio/track.mp3"
