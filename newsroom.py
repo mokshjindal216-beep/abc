@@ -75,7 +75,6 @@ def generate_content(art, ctx):
     client = Groq(api_key=config.GROQ_API_KEY)
     model = get_best_groq_model(client)
     
-    # STRICT JSON - 20-25 WORDS
     v_prompt = f"Analyze: {art['title']}\nContext: {ctx}\nReturn JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", \"headline\": \"5-8 words\", \"summary\": \"EXACTLY 20-25 words UNIQUE facts\"}}"
     v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
@@ -92,7 +91,6 @@ def fit_text(draw, text, max_w, max_h, start_size):
     while size > 25:
         font = ImageFont.truetype("Anton.ttf", size)
         lines = textwrap.wrap(text, width=int(max_w/(size*0.55)))
-        # Calculate true height of the text block
         th = sum([draw.textbbox((0,0), l, font=font)[3] - draw.textbbox((0,0), l, font=font)[1] + 15 for l in lines])
         if th < max_h: return font, lines
         size -= 4
@@ -128,21 +126,26 @@ def render_video(art, mood, hl, summ):
         draw.rounded_rectangle([(60,150), (60+draw.textlength(sn, f_s)+20, 210)], 12, fill=cfg["c"])
         draw.text((70,160), sn, font=f_s, fill="black")
         
-        # --- HEADLINE: Start Aggressive (140px) ---
-        f_h, h_l = fit_text(draw, hl.upper(), 900, 450, 140)
-        cy = 880
+        # --- FIXED: MOVED START POSITION UP TO Y=600 ---
+        # This gives massive room for the text to breathe
+        cy = 600 
+
+        # HEADLINE (Aggressive Size 140)
+        f_h, h_l = fit_text(draw, hl.upper(), 900, 600, 140) 
         for l in h_l:
             draw.text((65, cy+5), l, font=f_h, fill="black")
             draw.text((60, cy), l, font=f_h, fill=cfg["c"])
             cy += f_h.size + 15
         
-        # --- SUMMARY: Start Aggressive (100px) ---
-        # The code will try 100px first. If it doesn't fit the Safe Zone, 
-        # it will shrink until it does. This guarantees MAX usage of space.
-        SAFE_LIMIT = 1344
+        # --- FIXED: RELAXED SAFE LIMIT TO 1500 ---
+        SAFE_LIMIT = 1500
+        
+        # SUMMARY (Aggressive Size 100)
+        # Now calculating remaining space from the NEW cy position (likely ~900-1000)
+        # resulting in ~500px of space for summary. Plenty.
         f_u, s_l = fit_text(draw, summ, 900, SAFE_LIMIT-cy, 100)
         
-        cy += 20
+        cy += 30 # Gap between headline and summary
         for l in s_l:
             if cy > SAFE_LIMIT: break 
             draw.text((60, cy), l, font=f_u, fill="white")
