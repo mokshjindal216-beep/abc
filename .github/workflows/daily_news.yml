@@ -1,0 +1,55 @@
+name: Hourly Viral News Bot
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Run every hour
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Install System Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick ffmpeg ghostscript fonts-dejavu-core
+          sudo sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml
+
+      # --- SMART CACHING START ---
+      - name: Cache Assets
+        id: cache-assets
+        uses: actions/cache@v3
+        with:
+          path: |
+            assets/audio
+            Anton.ttf
+          key: assets-v1-${{ hashFiles('main.py') }}
+          restore-keys: |
+            assets-v1-
+      # --- SMART CACHING END ---
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Libraries
+        run: |
+          pip install groq moviepy==1.0.3 numpy Pillow==9.5.0 imageio_ffmpeg requests google-generativeai cloudinary
+
+      - name: Run Bot
+        run: python main.py
+        
+      - name: Save Processed News History
+        run: |
+          git config --global user.name "NewsBot"
+          git config --global user.email "bot@noreply.github.com"
+          git add processed_news.txt || echo "No new history"
+          git commit -m "Update processed news log" || echo "No changes to commit"
+          git push
