@@ -1,261 +1,310 @@
-# main.py
-import os
-import time
-import requests
-import textwrap
-import random
-import numpy as np  # <--- FIXED: Added missing NumPy import
-import cloudinary
-import cloudinary.uploader
-import config
-from PIL import Image, ImageDraw, ImageFont
+import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, config_empire as config, difflib
+from PIL import Image, ImageDraw, ImageFont, ImageFile
 from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip, AudioFileClip
 from groq import Groq
 from datetime import datetime
+from newspaper import Article
+from duckduckgo_search import DDGS
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
-# --- SETUP CLOUDINARY ---
-cloudinary.config(
-  cloud_name = config.CLOUDINARY_CLOUD_NAME,
-  api_key = config.CLOUDINARY_API_KEY,
-  api_secret = config.CLOUDINARY_API_SECRET
-)
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+cloudinary.config(cloud_name=config.CLOUDINARY_CLOUD_NAME, api_key=config.CLOUDINARY_API_KEY, api_secret=config.CLOUDINARY_API_SECRET)
 
-# --- SYSTEM UTILS ---
-def log(step, message):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔹 {step}: {message}")
+# --- 1. SETUP & ASSETS ---
+# ELITE SOURCES ONLY (Quality > Quantity)
+PREMIUM_SOURCES = [
+    "reuters", "associated-press", "bloomberg", "the-wall-street-journal", 
+    "the-economist", "bbc-news", "wired", "the-verge", "techcrunch", 
+    "national-geographic", "scientific-american", "nature"
+]
 
-def send_telegram(message):
-    try:
-        url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": config.TELEGRAM_ADMIN_ID, "text": message, "parse_mode": "Markdown"}
-        requests.post(url, data=payload)
-    except: pass
+def log(step, msg): 
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔹 {step.upper()}: {msg}")
 
-# --- DEDUPLICATION SYSTEM ---
-HISTORY_FILE = "processed_news.txt"
-
-def load_history():
-    if not os.path.exists(HISTORY_FILE): return set()
-    with open(HISTORY_FILE, "r") as f:
-        return set(line.strip() for line in f)
-
-def save_to_history(url):
-    with open(HISTORY_FILE, "a") as f:
-        f.write(f"{url}\n")
-
-# --- ASSET MANAGER ---
 def ensure_assets():
     os.makedirs('assets/audio', exist_ok=True)
-    if not os.path.exists("assets/audio/track.mp3"):
-        log("ASSETS", "Downloading Audio...")
-        os.system("wget -q -O assets/audio/track.mp3 https://github.com/rafaelreis-hotmart/Audio-Sample-files/raw/master/sample.mp3")
-    
-    if not os.path.exists("Anton.ttf"):
-        log("ASSETS", "Downloading Backup Font...")
-        os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
+    tracks = {"crisis": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", "tech": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", "general": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"}
+    for n, u in tracks.items():
+        if not os.path.exists(f"assets/audio/{n}.mp3"): os.system(f"wget -q -O assets/audio/{n}.mp3 {u}")
+    if not os.path.exists("Anton.ttf"): os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
 
-def get_font(type="headline", size=60):
+# --- 2. INTELLIGENCE (ENGAGING MODE) ---
+def get_best_groq_model(client):
     try:
-        path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if type=="headline" else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-        return ImageFont.truetype(path, size)
-    except:
-        return ImageFont.truetype("Anton.ttf", size) if os.path.exists("Anton.ttf") else ImageFont.load_default()
+        models = client.models.list()
+        for m in models.data:
+            if "llama-3.3-70b" in m.id: return m.id
+        return "llama-3.3-70b-versatile"
+    except: return "llama-3.3-70b-versatile"
 
-# --- NEWS ENGINE ---
-def fetch_news():
-    log("NEWS", "Fetching Headlines...")
-    history = load_history()
-    candidates = []
-    
-    # NewsAPI
-    try:
-        url = f"https://newsapi.org/v2/top-headlines?country=us&apiKey={config.NEWS_API_KEY}"
-        data = requests.get(url).json()
-        if data.get('status') == 'ok':
-            for art in data.get('articles', []):
-                if art.get('urlToImage') and art['url'] not in history:
-                    candidates.append(art)
-    except Exception as e: log("WARN", f"NewsAPI Error: {e}")
-
-    # GNews
-    if len(candidates) < 5:
-        try:
-            url = f"https://gnews.io/api/v4/top-headlines?lang=en&token={config.GNEWS_API_KEY}"
-            data = requests.get(url).json()
-            if data.get('articles'):
-                for art in data['articles']:
-                    if art.get('image') and art['url'] not in history:
-                        candidates.append({
-                            "title": art['title'],
-                            "description": art['description'],
-                            "urlToImage": art['image'],
-                            "url": art['url'],
-                            "source": {"name": art['source']['name']}
-                        })
-        except: pass
-    
-    log("NEWS", f"Found {len(candidates)} new candidates.")
-    return candidates[:15]
-
-def pick_viral_winner(articles):
-    if not articles: return None
-    client = Groq(api_key=config.GROQ_API_KEY)
-    
-    prompt = "Articles:\n"
-    for i, a in enumerate(articles): prompt += f"{i}. {a['title']}\n"
-    
-    try:
-        completion = client.chat.completions.create(
-            messages=[{"role": "system", "content": "Pick the index (0-14) of the most VIRAL story. Return ONLY the number."},{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile"
-        )
-        idx = int(''.join(filter(str.isdigit, completion.choices[0].message.content)))
-        return articles[idx] if idx < len(articles) else articles[0]
-    except: return articles[0]
-
-# --- CONTENT GENERATOR ---
-def generate_content(article):
-    client = Groq(api_key=config.GROQ_API_KEY)
-    model = "llama-3.3-70b-versatile"
-    
-    hl = client.chat.completions.create(messages=[{"role":"user","content":f"Viral 5-8 word headline for: '{article['title']}'. UPPERCASE. No quotes. Aggressive."}], model=model).choices[0].message.content.strip().replace('"','')
-    summ = client.chat.completions.create(messages=[{"role":"user","content":f"Summarize in MAX 25 words. Article: '{article['title']}'. Text only."}], model=model).choices[0].message.content.strip()
-    
-    caption_prompt = f"""
-    Write a clean, readable Instagram Caption for: '{article['title']}'.
-    
-    FORMATTING RULES:
-    1. Start with a 1-sentence "Hook" that makes people stop scrolling. Use an emoji (🚨, ⚠️, or 🔥).
-    2. Add a blank line.
-    3. Write "👇 THE BREAKDOWN:"
-    4. Provide 3 short bullet points (•) explaining why this matters.
-    5. Add a blank line.
-    6. Write "💭 THOUGHTS?" and ask a question.
-    7. Add a blank line.
-    8. Add 5-7 viral hashtags at the bottom.
-    
-    Make it visually spacious. Do NOT use long paragraphs.
-    """
-    caption = client.chat.completions.create(messages=[{"role":"user","content":caption_prompt}], model=model).choices[0].message.content.strip()
-    
-    return hl, summ, caption
-
-# --- VIDEO ENGINE ---
-def create_video(article, headline, summary):
-    log("VIDEO", "Rendering...")
-    ensure_assets()
-    
-    with open("bg.jpg", "wb") as f: f.write(requests.get(article['urlToImage']).content)
-    
-    W, H = 1080, 1920
-    overlay = Image.new('RGBA', (W, H), (0,0,0,0))
-    draw = ImageDraw.Draw(overlay)
-    
-    # Gradient
-    gradient = Image.new('L', (W, H), 0)
-    g_draw = ImageDraw.Draw(gradient)
-    for y in range(int(H * 0.40), H):
-        alpha = int((y - H * 0.40) / (H * 0.60) * 255)
-        g_draw.line([(0, y), (W, y)], fill=alpha)
-    
-    black_out = Image.new('RGBA', (W, H), (0,0,0,0))
-    black_out.paste(Image.new('RGBA', (W, H), (0,0,0,240)), (0,0), mask=gradient)
-    overlay = Image.alpha_composite(overlay, black_out)
-    draw = ImageDraw.Draw(overlay)
-
-    # Source Pill
-    source = f"  {article['source']['name'].upper()}  "
-    font_src = get_font("body", 35)
-    w = draw.textlength(source, font=font_src)
-    draw.rounded_rectangle([(60, 150), (60+w+20, 210)], radius=12, fill="#FFD700")
-    draw.text((70, 160), source, font=font_src, fill="black")
-
-    # Text
-    cursor = 850
-    font_hl = get_font("headline", 100)
-    font_sum = get_font("body", 50)
-
-    for line in textwrap.wrap(headline, width=13):
-        draw.text((65, cursor+5), line, font=font_hl, fill="black")
-        draw.text((60, cursor), line, font=font_hl, fill="#FFD700")
-        cursor += 110
-    
-    cursor += 30
-    for line in textwrap.wrap(summary, width=30):
-        if cursor > 1500: break
-        draw.text((62, cursor+2), line, font=font_sum, fill="black")
-        draw.text((60, cursor), line, font=font_sum, fill="white")
-        cursor += 60
-    
-    overlay.save("overlay.png")
-
-    # Image Prep
-    img_pil = Image.open("bg.jpg").convert("RGB")
-    base_w, base_h = img_pil.size
-    ratio = 1080/1920
-    if base_w/base_h > ratio:
-        new_w = base_h * ratio
-        img_pil = img_pil.crop(((base_w - new_w)/2, 0, (base_w + new_w)/2, base_h))
-    else:
-        new_h = base_w / ratio
-        img_pil = img_pil.crop((0, (base_h - new_h)/2, base_w, (base_h + new_h)/2))
-    img_pil = img_pil.resize((1080, 1920), Image.LANCZOS)
-    img_pil.save("temp_bg.jpg")
-
-    # Video Render
-    img = ImageClip("temp_bg.jpg").set_duration(6)
-    img = img.fl(lambda gf, t: np.array(Image.fromarray(gf(t)).resize([int(d*(1+0.04*t)) for d in Image.fromarray(gf(t)).size], Image.BILINEAR).crop((0,0,1080,1920))))
-
-    track = "assets/audio/track.mp3"
-    final = CompositeVideoClip([img, ImageClip("overlay.png").set_duration(6)])
-    if os.path.exists(track): final = final.set_audio(AudioFileClip(track).subclip(0,6))
-    
-    final.write_videofile("final.mp4", fps=24, codec='libx264', audio_codec='aac', preset='ultrafast', threads=4, logger=None)
-    return "final.mp4"
-
-# --- UPLOAD ENGINE ---
-def upload_and_post(video_path, caption):
-    log("UPLOAD", "Uploading to Cloudinary...")
-    try:
-        res = cloudinary.uploader.upload(video_path, resource_type="video")
-        video_url = res['secure_url']
-    except Exception as e: return log("ERROR", f"Cloudinary failed: {e}")
-
-    log("INSTA", "Creating Reel Container...")
-    url = f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media"
-    payload = {"media_type": "REELS", "video_url": video_url, "caption": caption, "access_token": config.IG_ACCESS_TOKEN}
-    
-    r = requests.post(url, data=payload).json()
-    if 'id' not in r: return log("ERROR", f"Container failed: {r}")
-    
-    container_id = r['id']
-    log("INSTA", f"Waiting for processing (ID: {container_id})...")
-    
-    for _ in range(12):
-        time.sleep(10)
-        status = requests.get(f"https://graph.facebook.com/v18.0/{container_id}", params={"fields":"status_code", "access_token": config.IG_ACCESS_TOKEN}).json()
-        if status.get('status_code') == 'FINISHED':
-            log("INSTA", "Publishing...")
-            pub = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media_publish", data={"creation_id": container_id, "access_token": config.IG_ACCESS_TOKEN}).json()
-            if 'id' in pub:
-                log("SUCCESS", "✅ Posted successfully!")
-                send_telegram("✅ *Video Posted!*")
-                return True
-    
-    log("ERROR", "Instagram Timed Out.")
+def is_garbage(title):
+    t = title.lower()
+    ads = ["gift guide", "buying guide", "deals", "save $", "shop", "top picks", "review", "best of"]
+    if any(x in t for x in ads): return True
+    if not os.path.exists("history_v2.txt"): return False
+    with open("history_v2.txt", "r") as f:
+        for l in f:
+            if "|" in l and difflib.SequenceMatcher(None, t, l.split("|")[0].lower()).ratio() > 0.8: return True
     return False
 
+def fetch_news():
+    log("NEWS", "Sourcing from Elite List...")
+    cands = []
+    try:
+        r = requests.get(f"https://newsapi.org/v2/top-headlines?sources={','.join(PREMIUM_SOURCES)}&apiKey={config.NEWS_API_KEY}", timeout=15).json()
+        if r.get('status') == 'ok': cands.extend([a for a in r['articles'] if a.get('urlToImage') and not is_garbage(a['title'])])
+    except: pass
+    return cands[:15]
+
+def perform_research(article):
+    log("RESEARCH", f"Scanning: {article['title']}")
+    try:
+        art = Article(article['url']); art.download(); art.parse()
+        if len(art.text) > 500: return art.text[:2500]
+    except: pass
+    try:
+        with DDGS() as ddgs: return "\n".join([r['body'] for r in ddgs.text(article['title'], max_results=3)])
+    except: return article.get('description', '')
+
+def generate_content(art, ctx):
+    client = Groq(api_key=config.GROQ_API_KEY)
+    model = get_best_groq_model(client)
+    
+    # 1. Video Data - VIRAL HOOKS
+    v_prompt = (
+        f"Analyze this news: {art['title']}\nContext: {ctx}\n"
+        f"Goal: Create a SCRIPT for a viral short video.\n"
+        f"Return JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", "
+        f"\"headline\": \"5-8 words. PUNCHY, SHOCKING, HIGH IMPACT.\", "
+        f"\"summary\": \"EXACTLY 20-25 words. HIGH ENERGY FACTS. No filler.\"}}"
+    )
+    v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
+    
+    # 2. Caption + SMART HASHTAGS
+    cap_prompt = (
+        f"Write a caption for: '{art['title']}'. "
+        f"Style: Viral News Anchor. "
+        f"Structure: \n1. A shocking Hook question.\n2. Three quick bullet points.\n3. A debate question.\n"
+        f"At the end, generate exactly 15 hashtags:\n"
+        f"- 10 Specific/Niche tags (e.g. #SpaceX)\n"
+        f"- 5 Broad/Viral tags (e.g. #fyp #breakingnews)\n"
+        f"Limit total response to 2000 chars."
+    )
+    caption = client.chat.completions.create(messages=[{"role":"user","content":cap_prompt}], model=model).choices[0].message.content.strip()
+    
+    # 3. Deep Dive
+    div_prompt = f"250-word deep dive starting with '🧠 DEEP DIVE:' for: {art['title']}\nContext: {ctx}. Tone: Informative but casual/fun."
+    comment = client.chat.completions.create(messages=[{"role":"user","content":div_prompt}], model=model).choices[0].message.content.strip()
+    
+    return v_data['mood'], v_data['headline'], v_data['summary'], caption, comment
+
+# --- 3. RENDERER ---
+def fit_text(draw, text, max_w, max_h, start_size):
+    size = start_size
+    while size > 25:
+        font = ImageFont.truetype("Anton.ttf", size)
+        lines = textwrap.wrap(text, width=int(max_w/(size*0.55)))
+        th = sum([draw.textbbox((0,0), l, font=font)[3] - draw.textbbox((0,0), l, font=font)[1] + 15 for l in lines])
+        if th < max_h: return font, lines
+        size -= 4
+    return ImageFont.truetype("Anton.ttf", 25), textwrap.wrap(text, width=28)
+
+def render_video(art, mood, hl, summ):
+    ensure_assets()
+    cfg = {"crisis": {"c": "#FF0000", "a": "assets/audio/crisis.mp3"}, "tech": {"c": "#00F0FF", "a": "assets/audio/tech.mp3"}, "general": {"c": "#FFD700", "a": "assets/audio/general.mp3"}}.get(mood.lower(), {"c": "#FFD700", "a": "assets/audio/general.mp3"})
+    
+    try:
+        r = requests.get(art['urlToImage'], timeout=15)
+        if r.status_code != 200 or len(r.content) < 1000: raise Exception("Invalid Image")
+        with open("bg.jpg", "wb") as f: f.write(r.content)
+        Image.open("bg.jpg").verify()
+    except Exception as e: return None
+
+    try:
+        W, H = 1080, 1920
+        overlay = Image.new('RGBA', (W, H), (0,0,0,0))
+        draw = ImageDraw.Draw(overlay)
+        grad = Image.new('L', (W, H), 0)
+        for y in range(int(H*0.45), H): ImageDraw.Draw(grad).line([(0,y),(W,y)], fill=int((y-H*0.45)/(H*0.55)*255))
+        overlay.paste(Image.new('RGBA',(W,H),(0,0,0,240)), (0,0), mask=grad)
+        
+        f_s = ImageFont.truetype("Anton.ttf", 35)
+        sn = f" {art['source']['name'].upper()} "
+        draw.rounded_rectangle([(60,150), (60+draw.textlength(sn, f_s)+20, 210)], 12, fill=cfg["c"])
+        draw.text((70,160), sn, font=f_s, fill="black")
+        
+        cy = 600
+        f_h, h_l = fit_text(draw, hl.upper(), 900, 600, 140)
+        for l in h_l:
+            draw.text((65, cy+5), l, font=f_h, fill="black")
+            draw.text((60, cy), l, font=f_h, fill=cfg["c"])
+            cy += f_h.size + 15
+        
+        SAFE_LIMIT = 1500
+        f_u, s_l = fit_text(draw, summ, 900, SAFE_LIMIT-cy, 100)
+        cy += 30
+        for l in s_l:
+            if cy > SAFE_LIMIT: break
+            draw.text((60, cy), l, font=f_u, fill="white")
+            cy += f_u.size + 12
+            
+        overlay.save("overlay.png")
+        img = Image.open("bg.jpg").convert("RGB")
+        bw, bh = img.size; ratio = 1080/1920
+        if bw/bh > ratio: nw = bh * ratio; img = img.crop(((bw-nw)/2, 0, (bw+nw)/2, bh))
+        else: nh = bw/ratio; img = img.crop((0, (bh-nh)/2, bw, (bh-nh)/2 + nh))
+        img.resize((1080, 1920), Image.LANCZOS).save("temp_bg.jpg")
+        
+        clip = ImageClip("temp_bg.jpg").set_duration(6).fl(lambda gf, t: np.array(Image.fromarray(gf(t)).resize([int(d*(1+0.04*t)) for d in Image.fromarray(gf(t)).size], Image.BILINEAR).crop((0,0,1080,1920))))
+        final = CompositeVideoClip([clip, ImageClip("overlay.png").set_duration(6)])
+        if os.path.exists(cfg["a"]): final = final.set_audio(AudioFileClip(cfg["a"]).subclip(0,6))
+        final.write_videofile("final.mp4", fps=24, codec='libx264', audio_codec='aac', preset='ultrafast', logger=None)
+        return "final.mp4"
+    except: return None
+
+# --- 4. PLATFORM POSTING ---
+
+def send_telegram(msg):
+    try:
+        if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_ADMIN_ID:
+            requests.post(f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage", 
+                          data={"chat_id": config.TELEGRAM_ADMIN_ID, "text": msg})
+    except: pass
+
+def post_instagram(path, cap, comm):
+    log("INSTA", "Posting with OLD Token...")
+    try:
+        up = cloudinary.uploader.upload(path, resource_type="video")
+        r = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media", data={"media_type": "REELS", "video_url": up['secure_url'], "caption": cap, "access_token": config.IG_ACCESS_TOKEN}).json()
+        if 'id' in r:
+            cid = r['id']
+            log("INSTA_DEBUG", f"Container Created: {cid}")
+            for _ in range(15):
+                time.sleep(10)
+                s = requests.get(f"https://graph.facebook.com/v18.0/{cid}", params={"fields":"status_code", "access_token": config.IG_ACCESS_TOKEN}).json()
+                if s.get('status_code') == 'FINISHED':
+                    p = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media_publish", data={"creation_id": cid, "access_token": config.IG_ACCESS_TOKEN}).json()
+                    if 'id' in p:
+                        log("INSTA_SUCCESS", f"Published ID: {p['id']}")
+                        time.sleep(5)
+                        requests.post(f"https://graph.facebook.com/v18.0/{p['id']}/comments", data={"message": comm, "access_token": config.IG_ACCESS_TOKEN})
+                        return True
+        log("INSTA_FAIL", f"Raw Response: {r}")
+        return False
+    except Exception as e:
+        log("INSTA_ERROR", str(e))
+        return False
+
+def post_facebook(path, cap, deep_dive):
+    log("FB", f"Posting to New Page ID: {config.FB_PAGE_ID}...")
+    full_desc = f"{cap}\n\n---\n{deep_dive}"
+    try:
+        # 1. Start Upload Session
+        init = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "start", "access_token": config.FB_ACCESS_TOKEN}).json()
+        if 'video_id' not in init: 
+            log("FB_INIT_FAIL", f"Could not start upload. Response: {init}")
+            return False
+        
+        vid_id = init['video_id']
+        upload_url = init['upload_url']
+        log("FB_DEBUG", f"Video ID Reserved: {vid_id}")
+        
+        # 2. Upload Bytes (STRICT BINARY MODE)
+        file_size = os.path.getsize(path)
+        with open(path, 'rb') as f:
+            video_data = f.read()
+            
+        upload_res = requests.post(
+            upload_url,
+            headers={
+                "Authorization": f"OAuth {config.FB_ACCESS_TOKEN}",
+                "offset": "0",
+                "file_size": str(file_size)
+            },
+            data=video_data 
+        )
+        
+        if upload_res.status_code != 200:
+            log("FB_UPLOAD_FAIL", f"Status: {upload_res.status_code} | Error: {upload_res.text}")
+            return False
+        else:
+            log("FB_UPLOAD_SUCCESS", "Binary chunks transferred.")
+
+        # --- SAFE WAIT ---
+        log("FB_DEBUG", "Waiting 30s for processing...")
+        time.sleep(30)
+        
+        # 3. Publish
+        fin = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "finish", "video_id": vid_id, "video_state": "PUBLISHED", "description": full_desc[:5000], "access_token": config.FB_ACCESS_TOKEN}).json()
+        
+        if 'success' in fin and fin['success']:
+            log("FB_SUCCESS", "Video Published Successfully.")
+            return True
+        else:
+            log("FB_PUBLISH_FAIL", f"Final Response: {fin}")
+            return False
+            
+    except Exception as e:
+        log("FB_CRITICAL_ERROR", str(e))
+        return False
+
+def post_youtube(path, title, deep_dive):
+    log("YOUTUBE", "Posting Short...")
+    try:
+        creds = Credentials(None, refresh_token=config.YT_REFRESH_TOKEN, token_uri="https://oauth2.googleapis.com/token", client_id=config.YT_CLIENT_ID, client_secret=config.YT_CLIENT_SECRET)
+        youtube = build("youtube", "v3", credentials=creds)
+        request = youtube.videos().insert(
+            part="snippet,status",
+            body={
+                "snippet": {"title": title[:100], "description": deep_dive, "tags": ["shorts", "news"]}, 
+                "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
+            },
+            media_body=MediaFileUpload(path)
+        )
+        res = request.execute()
+        if 'id' in res:
+            log("YT_SUCCESS", f"Video ID: {res['id']}")
+            return True
+        else:
+            log("YT_FAIL", f"API Response: {res}")
+            return False
+    except Exception as e:
+        log("YT_ERROR", f"Exception: {str(e)}")
+        return False
+
+# --- 5. EXECUTION LOOP ---
 if __name__ == "__main__":
     ensure_assets()
-    log("BOT", "Checking for News...")
-    candidates = fetch_news()
-    winner = pick_viral_winner(candidates)
+    log("BOT", "Empire Engine V3 Running...")
     
-    if winner:
-        log("BOT", f"Selected: {winner['title']}")
-        hl, summ, caption = generate_content(winner)
-        video = create_video(winner, hl, summ)
-        if upload_and_post(video, caption):
-            save_to_history(winner['url'])
+    # Simple logic: If the bot is running, it tries to post EVERYWHERE.
+    # The limit is controlled by the GitHub Schedule (Cron), not this script.
+    
+    cands = fetch_news()
+    if not cands: log("BOT", "No News.")
     else:
-        log("BOT", "No suitable new news found.")
+        for i, art in enumerate(cands):
+            log("BOT", f"Candidate #{i+1}: {art['title']}")
+            try:
+                ctx = perform_research(art)
+                m, h, s, cp, cm = generate_content(art, ctx)
+                v = render_video(art, m, h, s)
+                if v:
+                    # POST EVERYWHERE (1 Run = 1 Post on All Platforms)
+                    ig = post_instagram(v, cp, cm)
+                    fb = post_facebook(v, cp, cm)
+                    yt = post_youtube(v, h + " #shorts", cm)
+                    
+                    # TELEGRAM REPORT
+                    status_msg = f"📰 *Empire Bot Update*\n\nTitle: {art['title']}\n\n✅ IG: {ig}\n✅ FB: {fb}\n✅ YT: {yt}"
+                    send_telegram(status_msg)
+                    
+                    if ig or fb or yt:
+                        with open("history_v2.txt", "a") as f: f.write(f"{art['title']}|{art['url']}\n")
+                        log("FINAL_STATUS", f"IG:{ig} | FB:{fb} | YT:{yt}")
+                        break
+                    else: log("WARN", "All Uploads Failed.")
+                else: log("WARN", "Render Failed.")
+            except Exception as e: log("ERROR", e)
