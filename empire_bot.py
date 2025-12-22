@@ -146,6 +146,118 @@ def render_video(art, mood, hl, summ):
 # --- 4. PLATFORM POSTING ---
 
 def post_instagram(path, cap, comm):
+    log("INSTA", "Posting with OLD Token...")
+    try:
+        up = cloudinary.uploader.upload(path, resource_type="video")
+        r = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media", data={"media_type": "REELS", "video_url": up['secure_url'], "caption": cap, "access_token": config.IG_ACCESS_TOKEN}).json()
+        if 'id' in r:
+            cid = r['id']
+            for _ in range(15):
+                time.sleep(10)
+                s = requests.get(f"https://graph.facebook.com/v18.0/{cid}", params={"fields":"status_code", "access_token": config.IG_ACCESS_TOKEN}).json()
+                if s.get('status_code') == 'FINISHED':
+                    p = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media_publish", data={"creation_id": cid, "access_token": config.IG_ACCESS_TOKEN}).json()
+                    if 'id' in p:
+                        time.sleep(5)
+                        requests.post(f"https://graph.facebook.com/v18.0/{p['id']}/comments", data={"message": comm, "access_token": config.IG_ACCESS_TOKEN})
+                        return True
+        return False
+    except: return False
+
+def post_facebook(path, cap, deep_dive):
+    log("FB", "Posting with NEW Token...")
+    # Appending Deep Dive to the Caption as requested
+    full_desc = f"{cap}\n\n---\n{deep_dive}"
+    
+    try:
+        # 1. Start Upload
+        init = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "start", "access_token": config.FB_ACCESS_TOKEN}).json()
+        if 'video_id' not in init: return False
+        vid_id = init['video_id']
+        
+        # 2. Upload Bytes
+        with open(path, 'rb') as f:
+            requests.post(init['upload_url'], headers={"Authorization": f"OAuth {config.FB_ACCESS_TOKEN}"}, files={'video_file_chunk': f})
+        
+        # 3. Publish
+        fin = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "finish", "video_id": vid_id, "video_state": "PUBLISHED", "description": full_desc[:5000], "access_token": config.FB_ACCESS_TOKEN}).json()
+        return 'success' in fin and fin['success']
+    except Exception as e:
+        log("FB_ERROR", str(e))
+        return False
+
+def post_youtube(path, title, deep_dive):
+    log("YOUTUBE", "Posting Short (Limited)...")
+    try:
+        creds = Credentials(
+            None,
+            refresh_token=config.YT_REFRESH_TOKEN,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=config.YT_CLIENT_ID,
+            client_secret=config.YT_CLIENT_SECRET
+        )
+        youtube = build("youtube", "v3", credentials=creds)
+        
+        request = youtube.videos().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": title[:100], 
+                    "description": deep_dive + "\n\n" + GENERIC_TAGS, # Full Deep Dive here
+                    "tags": ["shorts", "news"]
+                },
+                "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
+            },
+            media_body=MediaFileUpload(path)
+        )
+        res = request.execute()
+        return 'id' in res
+    except Exception as e:
+        log("YT_ERROR", str(e))
+        return False
+
+# --- 5. EXECUTION LOOP ---
+if __name__ == "__main__":
+    ensure_assets()
+    log("BOT", "Empire Engine V3 Running...")
+    
+    # FREQUENCY CHECK: YouTube only runs every 4 hours (approx 6 times a day)
+    # Using UTC hour: 0, 4, 8, 12, 16, 20
+    current_hour = datetime.utcnow().hour
+    should_post_yt = (current_hour % 4 == 0)
+    
+    cands = fetch_news()
+    
+    if not cands: log("BOT", "No News.")
+    else:
+        for i, art in enumerate(cands):
+            log("BOT", f"Candidate #{i+1}: {art['title']}")
+            try:
+                ctx = perform_research(art)
+                m, h, s, cp, cm = generate_content(art, ctx)
+                v = render_video(art, m, h, s)
+                
+                if v:
+                    # 1. Instagram (Always runs, uses OLD token)
+                    ig = post_instagram(v, cp, cm)
+                    
+                    # 2. Facebook (Always runs, uses NEW token, Deep Dive added to caption)
+                    fb = post_facebook(v, cp, cm)
+                    
+                    # 3. YouTube (Runs only 6 times a day)
+                    yt = False
+                    if should_post_yt:
+                        yt = post_youtube(v, h + " #shorts", cm) # Passing Deep Dive (cm)
+                    else:
+                        log("YOUTUBE", "Skipping this hour to save quota.")
+                    
+                    if ig or fb or yt:
+                        with open("history_v2.txt", "a") as f: f.write(f"{art['title']}|{art['url']}\n")
+                        log("SUCCESS", f"Result - IG:{ig} FB:{fb} YT:{yt}")
+                        break
+                    else: log("WARN", "All Uploads Failed.")
+                else: log("WARN", "Render Failed.")
+            except Exception as e: log("ERROR", e)
     log("INSTA", "Posting...")
     try:
         up = cloudinary.uploader.upload(path, resource_type="video")
