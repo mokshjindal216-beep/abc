@@ -1,0 +1,60 @@
+name: Empire Bot V3 (IG+YT+FB)
+
+on:
+  workflow_dispatch:  # Manual Trigger Button
+  schedule:
+    - cron: '0 */6 * * *'  # Runs every 6 hours (Adjust as needed)
+
+permissions:
+  contents: write
+
+jobs:
+  run-empire-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Libraries
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Empire Engine
+        env:
+          # --- NEWS & AI ---
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
+          # --- CLOUD ASSETS ---
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+          # --- INSTAGRAM & FACEBOOK (User Token Used for Both) ---
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+
+          # --- YOUTUBE ---
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+
+          # --- NOTIFICATIONS ---
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ADMIN_ID: ${{ secrets.TELEGRAM_ADMIN_ID }}
+        run: python empire_bot.py
+
+      - name: Save History
+        run: |
+          git config --global user.name "EmpireBot"
+          git config --global user.email "bot@newsroom.com"
+          git add history_v2.txt
+          git commit -m "Update History" || echo "No changes to commit"
+          git push
