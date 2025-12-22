@@ -164,20 +164,37 @@ def post_instagram(path, cap, comm):
         return False
     except: return False
 
-def post_facebook(path, cap):
-    log("FB", "Posting Reel...")
+def get_fb_page_token():
+    # Helper to exchange User Token (IG_ACCESS_TOKEN) for Page Token
     try:
-        # 1. Start Upload Session
-        init = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "start", "access_token": config.FB_PAGE_ACCESS_TOKEN}).json()
+        r = requests.get(f"https://graph.facebook.com/v18.0/me/accounts", params={"access_token": config.IG_ACCESS_TOKEN}).json()
+        if 'data' in r:
+            for page in r['data']:
+                if page['id'] == config.FB_PAGE_ID:
+                    return page['access_token']
+    except: pass
+    return None
+
+def post_facebook(path, cap):
+    log("FB", "Swapping Token & Posting...")
+    # 1. Get the Page Token dynamically using the IG User Token
+    page_token = get_fb_page_token()
+    if not page_token:
+        log("FB_ERROR", "Could not fetch Page Token from User Token.")
+        return False
+
+    try:
+        # 2. Start Upload
+        init = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "start", "access_token": page_token}).json()
         if 'video_id' not in init: return False
         vid_id = init['video_id']
         
-        # 2. Upload Bytes
+        # 3. Upload Bytes
         with open(path, 'rb') as f:
-            requests.post(init['upload_url'], headers={"Authorization": f"OAuth {config.FB_PAGE_ACCESS_TOKEN}"}, files={'video_file_chunk': f})
+            requests.post(init['upload_url'], headers={"Authorization": f"OAuth {page_token}"}, files={'video_file_chunk': f})
         
-        # 3. Publish
-        fin = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "finish", "video_id": vid_id, "video_state": "PUBLISHED", "description": cap, "access_token": config.FB_PAGE_ACCESS_TOKEN}).json()
+        # 4. Publish
+        fin = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "finish", "video_id": vid_id, "video_state": "PUBLISHED", "description": cap, "access_token": page_token}).json()
         return 'success' in fin and fin['success']
     except Exception as e:
         log("FB_ERROR", str(e))
