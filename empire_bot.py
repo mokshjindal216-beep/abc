@@ -1,4 +1,4 @@
-import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, config_empire as config, difflib
+import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, config_empire as config, difflib, re
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip, AudioFileClip
 from groq import Groq
@@ -31,7 +31,7 @@ def ensure_assets():
         if not os.path.exists(f"assets/audio/{n}.mp3"): os.system(f"wget -q -O assets/audio/{n}.mp3 {u}")
     if not os.path.exists("Anton.ttf"): os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
 
-# --- 2. INTELLIGENCE (ENGAGING MODE) ---
+# --- 2. INTELLIGENCE (SEO OPTIMIZED) ---
 def get_best_groq_model(client):
     try:
         models = client.models.list()
@@ -42,7 +42,6 @@ def get_best_groq_model(client):
 
 def is_garbage(title):
     t = title.lower()
-    # Stricter Filter for the "Elite" list
     ads = ["gift guide", "buying guide", "deals", "save $", "shop", "top picks", "review", "best of"]
     if any(x in t for x in ads): return True
     if not os.path.exists("history_v2.txt"): return False
@@ -79,20 +78,17 @@ def generate_content(art, ctx):
         f"Analyze this news: {art['title']}\nContext: {ctx}\n"
         f"Goal: Create a SCRIPT for a viral short video.\n"
         f"Return JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", "
-        f"\"headline\": \"5-8 words. PUNCHY, SHOCKING, HIGH IMPACT.\", "
+        f"\"headline\": \"5-8 words. CLICKBAIT STYLE (e.g. 'You Won't Believe X').\", "
         f"\"summary\": \"EXACTLY 20-25 words. HIGH ENERGY FACTS. No filler.\"}}"
     )
     v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
-    # 2. Caption + SMART HASHTAGS
+    # 2. Caption + SEO KEYWORDS
     cap_prompt = (
         f"Write a caption for: '{art['title']}'. "
         f"Style: Viral News Anchor. "
         f"Structure: \n1. A shocking Hook question.\n2. Three quick bullet points.\n3. A debate question.\n"
-        f"At the end, generate exactly 15 hashtags:\n"
-        f"- 10 Specific/Niche tags (e.g. #SpaceX)\n"
-        f"- 5 Broad/Viral tags (e.g. #fyp #breakingnews)\n"
-        f"Limit total response to 2000 chars."
+        f"At the end, generate exactly 15 hashtags. Mix Broad (e.g. #News) and Niche (e.g. #{v_data['headline'].split()[0]})."
     )
     caption = client.chat.completions.create(messages=[{"role":"user","content":cap_prompt}], model=model).choices[0].message.content.strip()
     
@@ -159,9 +155,14 @@ def render_video(art, mood, hl, summ):
         else: nh = bw/ratio; img = img.crop((0, (bh-nh)/2, bw, (bh-nh)/2 + nh))
         img.resize((1080, 1920), Image.LANCZOS).save("temp_bg.jpg")
         
+        # ZOOM SPEED REVERTED TO 0.04 (ORIGINAL)
         clip = ImageClip("temp_bg.jpg").set_duration(6).fl(lambda gf, t: np.array(Image.fromarray(gf(t)).resize([int(d*(1+0.04*t)) for d in Image.fromarray(gf(t)).size], Image.BILINEAR).crop((0,0,1080,1920))))
+        
+        # AUDIO VOLUME REDUCED BY 25% (0.75)
         final = CompositeVideoClip([clip, ImageClip("overlay.png").set_duration(6)])
-        if os.path.exists(cfg["a"]): final = final.set_audio(AudioFileClip(cfg["a"]).subclip(0,6))
+        if os.path.exists(cfg["a"]): 
+            final = final.set_audio(AudioFileClip(cfg["a"]).subclip(0,6).volumex(0.75))
+            
         final.write_videofile("final.mp4", fps=24, codec='libx264', audio_codec='aac', preset='ultrafast', logger=None)
         return "final.mp4"
     except: return None
@@ -203,7 +204,6 @@ def post_facebook(path, cap, deep_dive):
     log("FB", f"Posting to New Page ID: {config.FB_PAGE_ID}...")
     full_desc = f"{cap}\n\n---\n{deep_dive}"
     try:
-        # 1. Start Upload Session
         init = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "start", "access_token": config.FB_ACCESS_TOKEN}).json()
         if 'video_id' not in init: 
             log("FB_INIT_FAIL", f"Could not start upload. Response: {init}")
@@ -213,18 +213,13 @@ def post_facebook(path, cap, deep_dive):
         upload_url = init['upload_url']
         log("FB_DEBUG", f"Video ID Reserved: {vid_id}")
         
-        # 2. Upload Bytes (STRICT BINARY MODE)
         file_size = os.path.getsize(path)
         with open(path, 'rb') as f:
             video_data = f.read()
             
         upload_res = requests.post(
             upload_url,
-            headers={
-                "Authorization": f"OAuth {config.FB_ACCESS_TOKEN}",
-                "offset": "0",
-                "file_size": str(file_size)
-            },
+            headers={"Authorization": f"OAuth {config.FB_ACCESS_TOKEN}", "offset": "0", "file_size": str(file_size)},
             data=video_data 
         )
         
@@ -234,11 +229,9 @@ def post_facebook(path, cap, deep_dive):
         else:
             log("FB_UPLOAD_SUCCESS", "Binary chunks transferred.")
 
-        # --- SAFE WAIT ---
         log("FB_DEBUG", "Waiting 30s for processing...")
         time.sleep(30)
         
-        # 3. Publish
         fin = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "finish", "video_id": vid_id, "video_state": "PUBLISHED", "description": full_desc[:5000], "access_token": config.FB_ACCESS_TOKEN}).json()
         
         if 'success' in fin and fin['success']:
@@ -252,15 +245,24 @@ def post_facebook(path, cap, deep_dive):
         log("FB_CRITICAL_ERROR", str(e))
         return False
 
-def post_youtube(path, title, deep_dive):
-    log("YOUTUBE", "Posting Short...")
+def post_youtube(path, title, description, tags):
+    log("YOUTUBE", "Posting Short with SEO...")
     try:
         creds = Credentials(None, refresh_token=config.YT_REFRESH_TOKEN, token_uri="https://oauth2.googleapis.com/token", client_id=config.YT_CLIENT_ID, client_secret=config.YT_CLIENT_SECRET)
         youtube = build("youtube", "v3", credentials=creds)
+        
+        # EXTRACT TAGS FROM CAPTION
+        tag_list = [t.strip("#") for t in tags.split() if t.startswith("#")][:15]
+        if not tag_list: tag_list = ["shorts", "news", "viral"]
+
         request = youtube.videos().insert(
             part="snippet,status",
             body={
-                "snippet": {"title": title[:100], "description": deep_dive, "tags": ["shorts", "news"]}, 
+                "snippet": {
+                    "title": title[:100], 
+                    "description": description, 
+                    "tags": tag_list
+                }, 
                 "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
             },
             media_body=MediaFileUpload(path)
@@ -281,9 +283,6 @@ if __name__ == "__main__":
     ensure_assets()
     log("BOT", "Empire Engine V3 Running...")
     
-    # Logic: "One Run = One Post Everywhere"
-    # The Cron Job (*/4) controls the frequency (6 times a day).
-    
     cands = fetch_news()
     if not cands: log("BOT", "No News.")
     else:
@@ -294,12 +293,12 @@ if __name__ == "__main__":
                 m, h, s, cp, cm = generate_content(art, ctx)
                 v = render_video(art, m, h, s)
                 if v:
-                    # POST EVERYWHERE
                     ig = post_instagram(v, cp, cm)
                     fb = post_facebook(v, cp, cm)
-                    yt = post_youtube(v, h + " #shorts", cm)
                     
-                    # TELEGRAM REPORT
+                    yt_desc = f"{cp}\n\n---\n{cm}"
+                    yt = post_youtube(v, h + " #shorts", yt_desc, cp)
+                    
                     status_msg = f"📰 *Empire Bot Update*\n\nTitle: {art['title']}\n\n✅ IG: {ig}\n✅ FB: {fb}\n✅ YT: {yt}"
                     send_telegram(status_msg)
                     
@@ -310,3 +309,4 @@ if __name__ == "__main__":
                     else: log("WARN", "All Uploads Failed.")
                 else: log("WARN", "Render Failed.")
             except Exception as e: log("ERROR", e)
+
