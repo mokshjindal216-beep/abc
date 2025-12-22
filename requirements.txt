@@ -9,3 +9,4 @@ newspaper3k
 duckduckgo-search
 pillow
 numpy
+lxml_html_clean
