@@ -14,9 +14,12 @@ cloudinary.config(cloud_name=config.CLOUDINARY_CLOUD_NAME, api_key=config.CLOUDI
 
 # --- 1. SETUP & ASSETS ---
 PREMIUM_SOURCES = ["reuters", "associated-press", "bbc-news", "cnn", "bloomberg", "the-wall-street-journal", "the-washington-post", "time", "wired", "the-verge", "techcrunch", "business-insider", "fortune", "cnbc", "abc-news", "cbs-news", "nbc-news", "politico", "axios", "the-hill", "usa-today", "the-independent", "the-telegraph", "france-24", "dw-news", "scmp", "the-hindu", "the-times-of-india", "variety", "hollywood-reporter", "rolling-stone", "ign", "espn", "bleacher-report", "national-geographic", "new-scientist", "scientific-american", "nature", "the-economist", "hacker-news", "ars-technica", "engadget", "gizmodo", "mashable", "vox", "new-york-magazine", "the-atlantic"]
-GENERIC_TAGS = "#news #breakingnews #viral #trending #shorts"
 
-def log(step, msg): print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔹 {step.upper()}: {msg}")
+# REMOVED: Old static tags. We now generate smart tags dynamically.
+
+def log(step, msg): 
+    # Enhanced Logging: Prints clearly to the console
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔹 {step.upper()}: {msg}")
 
 def ensure_assets():
     os.makedirs('assets/audio', exist_ok=True)
@@ -68,18 +71,28 @@ def generate_content(art, ctx):
     client = Groq(api_key=config.GROQ_API_KEY)
     model = get_best_groq_model(client)
     
+    # 1. Video Data
     v_prompt = f"Analyze: {art['title']}\nContext: {ctx}\nReturn JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", \"headline\": \"5-8 words\", \"summary\": \"EXACTLY 20-25 words UNIQUE facts\"}}"
     v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
-    cap_prompt = f"Caption for: {art['title']}. Hook, 3 bullets, question. Limit 2000 chars."
-    caption = client.chat.completions.create(messages=[{"role":"user","content":cap_prompt}], model=model).choices[0].message.content.strip() + f"\n.\n{GENERIC_TAGS}"
+    # 2. Caption + Smart Hashtags (UPDATED)
+    # Asking for 15 specific tags relevant to the news topic
+    cap_prompt = (
+        f"Write a caption for this news: '{art['title']}'. "
+        f"Structure: Hook, 3 quick bullet points, and a question. "
+        f"At the very end, generate 15 relevant, high-traffic hashtags specific to this news topic (mix of broad and niche). "
+        f"Do NOT use generic tags like #news only. "
+        f"Limit total response to 2000 chars."
+    )
+    caption = client.chat.completions.create(messages=[{"role":"user","content":cap_prompt}], model=model).choices[0].message.content.strip()
     
+    # 3. Deep Dive
     div_prompt = f"250-word deep dive starting with '🧠 DEEP DIVE:' for: {art['title']}\nContext: {ctx}"
     comment = client.chat.completions.create(messages=[{"role":"user","content":div_prompt}], model=model).choices[0].message.content.strip()
     
     return v_data['mood'], v_data['headline'], v_data['summary'], caption, comment
 
-# --- 3. RENDERER (Safe Zone Fixed) ---
+# --- 3. RENDERER ---
 def fit_text(draw, text, max_w, max_h, start_size):
     size = start_size
     while size > 25:
@@ -143,7 +156,7 @@ def render_video(art, mood, hl, summ):
         return "final.mp4"
     except: return None
 
-# --- 4. PLATFORM POSTING ---
+# --- 4. PLATFORM POSTING (ENHANCED LOGGING) ---
 
 def post_instagram(path, cap, comm):
     log("INSTA", "Posting with OLD Token...")
@@ -152,50 +165,76 @@ def post_instagram(path, cap, comm):
         r = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media", data={"media_type": "REELS", "video_url": up['secure_url'], "caption": cap, "access_token": config.IG_ACCESS_TOKEN}).json()
         if 'id' in r:
             cid = r['id']
+            log("INSTA_DEBUG", f"Container Created: {cid}")
             for _ in range(15):
                 time.sleep(10)
                 s = requests.get(f"https://graph.facebook.com/v18.0/{cid}", params={"fields":"status_code", "access_token": config.IG_ACCESS_TOKEN}).json()
                 if s.get('status_code') == 'FINISHED':
                     p = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media_publish", data={"creation_id": cid, "access_token": config.IG_ACCESS_TOKEN}).json()
                     if 'id' in p:
+                        log("INSTA_SUCCESS", f"Published ID: {p['id']}")
                         time.sleep(5)
                         requests.post(f"https://graph.facebook.com/v18.0/{p['id']}/comments", data={"message": comm, "access_token": config.IG_ACCESS_TOKEN})
                         return True
+        log("INSTA_FAIL", f"Raw Response: {r}")
         return False
-    except: return False
+    except Exception as e:
+        log("INSTA_ERROR", str(e))
+        return False
 
 def post_facebook(path, cap, deep_dive):
-    log("FB", "Posting with NEW Token...")
+    log("FB", f"Posting to New Page ID: {config.FB_PAGE_ID}...")
     full_desc = f"{cap}\n\n---\n{deep_dive}"
     try:
+        # 1. Start
         init = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "start", "access_token": config.FB_ACCESS_TOKEN}).json()
-        if 'video_id' not in init: return False
+        if 'video_id' not in init: 
+            log("FB_INIT_FAIL", f"Could not start upload. Response: {init}")
+            return False
+        
         vid_id = init['video_id']
+        log("FB_DEBUG", f"Video ID Reserved: {vid_id}")
+        
+        # 2. Upload
         with open(path, 'rb') as f:
             requests.post(init['upload_url'], headers={"Authorization": f"OAuth {config.FB_ACCESS_TOKEN}"}, files={'video_file_chunk': f})
+        
+        # 3. Publish
         fin = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "finish", "video_id": vid_id, "video_state": "PUBLISHED", "description": full_desc[:5000], "access_token": config.FB_ACCESS_TOKEN}).json()
-        return 'success' in fin and fin['success']
+        
+        if 'success' in fin and fin['success']:
+            log("FB_SUCCESS", "Video Published Successfully.")
+            return True
+        else:
+            log("FB_PUBLISH_FAIL", f"Final Response: {fin}")
+            return False
+            
     except Exception as e:
-        log("FB_ERROR", str(e))
+        log("FB_CRITICAL_ERROR", str(e))
         return False
 
 def post_youtube(path, title, deep_dive):
-    log("YOUTUBE", "Posting Short (Limited)...")
+    log("YOUTUBE", "Posting Short (Limited Schedule)...")
     try:
         creds = Credentials(None, refresh_token=config.YT_REFRESH_TOKEN, token_uri="https://oauth2.googleapis.com/token", client_id=config.YT_CLIENT_ID, client_secret=config.YT_CLIENT_SECRET)
         youtube = build("youtube", "v3", credentials=creds)
         request = youtube.videos().insert(
             part="snippet,status",
             body={
-                "snippet": {"title": title[:100], "description": deep_dive + "\n\n" + GENERIC_TAGS, "tags": ["shorts", "news"]},
+                "snippet": {"title": title[:100], "description": deep_dive, "tags": ["shorts", "news"]}, # Hashtags are now in deep_dive/caption
                 "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
             },
             media_body=MediaFileUpload(path)
         )
         res = request.execute()
-        return 'id' in res
+        if 'id' in res:
+            log("YT_SUCCESS", f"Video ID: {res['id']}")
+            return True
+        else:
+            log("YT_FAIL", f"API Response: {res}")
+            return False
     except Exception as e:
-        log("YT_ERROR", str(e))
+        log("YT_ERROR", f"Exception: {str(e)}")
         return False
 
 # --- 5. EXECUTION LOOP ---
@@ -205,6 +244,7 @@ if __name__ == "__main__":
     
     current_hour = datetime.utcnow().hour
     should_post_yt = (current_hour % 4 == 0)
+    log("SCHEDULER", f"Current UTC Hour: {current_hour}. Posting to YouTube? {'YES' if should_post_yt else 'NO (Saving Quota)'}")
     
     cands = fetch_news()
     if not cands: log("BOT", "No News.")
@@ -221,12 +261,10 @@ if __name__ == "__main__":
                     yt = False
                     if should_post_yt:
                         yt = post_youtube(v, h + " #shorts", cm)
-                    else:
-                        log("YOUTUBE", "Skipping this hour to save quota.")
                     
                     if ig or fb or yt:
                         with open("history_v2.txt", "a") as f: f.write(f"{art['title']}|{art['url']}\n")
-                        log("SUCCESS", f"Result - IG:{ig} FB:{fb} YT:{yt}")
+                        log("FINAL_STATUS", f"IG:{ig} | FB:{fb} | YT:{yt}")
                         break
                     else: log("WARN", "All Uploads Failed.")
                 else: log("WARN", "Render Failed.")
