@@ -6,6 +6,6 @@ moviepy==1.0.3
 cloudinary
 groq
 newspaper3k
-duckduckgo-search-python
+duckduckgo-search
 pillow
 numpy
