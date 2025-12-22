@@ -153,7 +153,7 @@ def render_video(art, mood, hl, summ):
         return "final.mp4"
     except: return None
 
-# --- 4. PLATFORM POSTING (FIXED UPLOAD HEADER) ---
+# --- 4. PLATFORM POSTING (BINARY UPLOAD FIX) ---
 
 def post_instagram(path, cap, comm):
     log("INSTA", "Posting with OLD Token...")
@@ -183,31 +183,42 @@ def post_facebook(path, cap, deep_dive):
     log("FB", f"Posting to New Page ID: {config.FB_PAGE_ID}...")
     full_desc = f"{cap}\n\n---\n{deep_dive}"
     try:
-        # 1. Start Upload
+        # 1. Start Upload Session
         init = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "start", "access_token": config.FB_ACCESS_TOKEN}).json()
         if 'video_id' not in init: 
             log("FB_INIT_FAIL", f"Could not start upload. Response: {init}")
             return False
         
         vid_id = init['video_id']
+        upload_url = init['upload_url']
         log("FB_DEBUG", f"Video ID Reserved: {vid_id}")
         
-        # 2. Upload Bytes (The Critical Step)
-        # FIX: Using 'Bearer' instead of 'OAuth' and printing status if it fails
+        # 2. Upload Bytes (STRICT BINARY MODE)
+        file_size = os.path.getsize(path)
         with open(path, 'rb') as f:
-            upload_res = requests.post(
-                init['upload_url'], 
-                headers={"Authorization": f"Bearer {config.FB_ACCESS_TOKEN}"}, 
-                files={'video_file_chunk': f}
-            )
+            video_data = f.read()
+            
+        # FIX: Sending RAW bytes (data=video_data) instead of files=...
+        # Also adding the mandatory 'offset' and 'file_size' headers
+        upload_res = requests.post(
+            upload_url,
+            headers={
+                "Authorization": f"OAuth {config.FB_ACCESS_TOKEN}",
+                "offset": "0",
+                "file_size": str(file_size)
+            },
+            data=video_data 
+        )
         
-        # DEBUG: Check if upload actually worked
+        # DEBUG: Check response
         if upload_res.status_code != 200:
             log("FB_UPLOAD_FAIL", f"Status: {upload_res.status_code} | Error: {upload_res.text}")
             return False
+        else:
+            log("FB_UPLOAD_SUCCESS", "Binary chunks transferred.")
 
-        # --- SAFE WAIT (Required for Reel Processing) ---
-        log("FB_DEBUG", "Upload sent. Waiting 30s for server processing...")
+        # --- SAFE WAIT ---
+        log("FB_DEBUG", "Waiting 30s for processing...")
         time.sleep(30)
         
         # 3. Publish
@@ -256,10 +267,9 @@ if __name__ == "__main__":
     current_hour = datetime.utcnow().hour
     
     # --- SCHEDULE CHECK ---
-    # Runs at 00, 04, 08, 12, 16, 20 UTC (6 times a day)
     should_post_yt = (current_hour % 4 == 0)
     
-    # FORCE TEST MODE: Uncomment the line below to test YouTube RIGHT NOW (Ignore Schedule)
+    # FORCE TEST MODE: Uncomment below to force YouTube NOW
     # should_post_yt = True 
     
     log("SCHEDULER", f"Current UTC Hour: {current_hour}. Posting to YouTube? {'YES' if should_post_yt else 'NO (Saving Quota)'}")
