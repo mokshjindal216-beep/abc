@@ -73,7 +73,6 @@ def generate_content(art, ctx):
     v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
     # 2. Caption + STRATEGIC HASHTAGS
-    # The prompt explicitly asks for a mix of Niche (Low Competition) and Broad (High Reach) tags.
     cap_prompt = (
         f"Write a caption for: '{art['title']}'. "
         f"Structure: Hook, 3 bullets, question. "
@@ -154,7 +153,7 @@ def render_video(art, mood, hl, summ):
         return "final.mp4"
     except: return None
 
-# --- 4. PLATFORM POSTING ---
+# --- 4. PLATFORM POSTING (FIXED UPLOAD HEADER) ---
 
 def post_instagram(path, cap, comm):
     log("INSTA", "Posting with OLD Token...")
@@ -193,12 +192,22 @@ def post_facebook(path, cap, deep_dive):
         vid_id = init['video_id']
         log("FB_DEBUG", f"Video ID Reserved: {vid_id}")
         
-        # 2. Upload Bytes
+        # 2. Upload Bytes (The Critical Step)
+        # FIX: Using 'Bearer' instead of 'OAuth' and printing status if it fails
         with open(path, 'rb') as f:
-            requests.post(init['upload_url'], headers={"Authorization": f"OAuth {config.FB_ACCESS_TOKEN}"}, files={'video_file_chunk': f})
+            upload_res = requests.post(
+                init['upload_url'], 
+                headers={"Authorization": f"Bearer {config.FB_ACCESS_TOKEN}"}, 
+                files={'video_file_chunk': f}
+            )
         
-        # --- SAFE WAIT ---
-        log("FB_DEBUG", "Waiting 30s for processing...")
+        # DEBUG: Check if upload actually worked
+        if upload_res.status_code != 200:
+            log("FB_UPLOAD_FAIL", f"Status: {upload_res.status_code} | Error: {upload_res.text}")
+            return False
+
+        # --- SAFE WAIT (Required for Reel Processing) ---
+        log("FB_DEBUG", "Upload sent. Waiting 30s for server processing...")
         time.sleep(30)
         
         # 3. Publish
@@ -249,6 +258,9 @@ if __name__ == "__main__":
     # --- SCHEDULE CHECK ---
     # Runs at 00, 04, 08, 12, 16, 20 UTC (6 times a day)
     should_post_yt = (current_hour % 4 == 0)
+    
+    # FORCE TEST MODE: Uncomment the line below to test YouTube RIGHT NOW (Ignore Schedule)
+    # should_post_yt = True 
     
     log("SCHEDULER", f"Current UTC Hour: {current_hour}. Posting to YouTube? {'YES' if should_post_yt else 'NO (Saving Quota)'}")
     
