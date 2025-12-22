@@ -13,7 +13,13 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 cloudinary.config(cloud_name=config.CLOUDINARY_CLOUD_NAME, api_key=config.CLOUDINARY_API_KEY, api_secret=config.CLOUDINARY_API_SECRET)
 
 # --- 1. SETUP & ASSETS ---
-PREMIUM_SOURCES = ["reuters", "associated-press", "bbc-news", "cnn", "bloomberg", "the-wall-street-journal", "the-washington-post", "time", "wired", "the-verge", "techcrunch", "business-insider", "fortune", "cnbc", "abc-news", "cbs-news", "nbc-news", "politico", "axios", "the-hill", "usa-today", "the-independent", "the-telegraph", "france-24", "dw-news", "scmp", "the-hindu", "the-times-of-india", "variety", "hollywood-reporter", "rolling-stone", "ign", "espn", "bleacher-report", "national-geographic", "new-scientist", "scientific-american", "nature", "the-economist", "hacker-news", "ars-technica", "engadget", "gizmodo", "mashable", "vox", "new-york-magazine", "the-atlantic"]
+# ELITE LIST (Exactly 15 High-Quality Sources)
+PREMIUM_SOURCES = [
+    "reuters", "associated-press", "bloomberg", "the-wall-street-journal", 
+    "the-economist", "bbc-news", "wired", "the-verge", "techcrunch", 
+    "national-geographic", "scientific-american", "nature", "cnn", 
+    "time", "business-insider"
+]
 
 def log(step, msg): 
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔹 {step.upper()}: {msg}")
@@ -25,7 +31,7 @@ def ensure_assets():
         if not os.path.exists(f"assets/audio/{n}.mp3"): os.system(f"wget -q -O assets/audio/{n}.mp3 {u}")
     if not os.path.exists("Anton.ttf"): os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
 
-# --- 2. INTELLIGENCE ---
+# --- 2. INTELLIGENCE (ENGAGING MODE) ---
 def get_best_groq_model(client):
     try:
         models = client.models.list()
@@ -36,7 +42,8 @@ def get_best_groq_model(client):
 
 def is_garbage(title):
     t = title.lower()
-    ads = ["gift guide", "buying guide", "deals", "save $", "shop", "top picks", "review"]
+    # Stricter Filter for the "Elite" list
+    ads = ["gift guide", "buying guide", "deals", "save $", "shop", "top picks", "review", "best of"]
     if any(x in t for x in ads): return True
     if not os.path.exists("history_v2.txt"): return False
     with open("history_v2.txt", "r") as f:
@@ -45,13 +52,12 @@ def is_garbage(title):
     return False
 
 def fetch_news():
-    log("NEWS", "Sourcing...")
+    log("NEWS", "Sourcing from Elite List...")
     cands = []
-    for i in range(0, 30, 15):
-        try:
-            r = requests.get(f"https://newsapi.org/v2/top-headlines?sources={','.join(PREMIUM_SOURCES[i:i+15])}&apiKey={config.NEWS_API_KEY}", timeout=15).json()
-            if r.get('status') == 'ok': cands.extend([a for a in r['articles'] if a.get('urlToImage') and not is_garbage(a['title'])])
-        except: pass
+    try:
+        r = requests.get(f"https://newsapi.org/v2/top-headlines?sources={','.join(PREMIUM_SOURCES)}&apiKey={config.NEWS_API_KEY}", timeout=15).json()
+        if r.get('status') == 'ok': cands.extend([a for a in r['articles'] if a.get('urlToImage') and not is_garbage(a['title'])])
+    except: pass
     return cands[:15]
 
 def perform_research(article):
@@ -68,23 +74,30 @@ def generate_content(art, ctx):
     client = Groq(api_key=config.GROQ_API_KEY)
     model = get_best_groq_model(client)
     
-    # 1. Video Data
-    v_prompt = f"Analyze: {art['title']}\nContext: {ctx}\nReturn JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", \"headline\": \"5-8 words\", \"summary\": \"EXACTLY 20-25 words UNIQUE facts\"}}"
+    # 1. Video Data - VIRAL HOOKS
+    v_prompt = (
+        f"Analyze this news: {art['title']}\nContext: {ctx}\n"
+        f"Goal: Create a SCRIPT for a viral short video.\n"
+        f"Return JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", "
+        f"\"headline\": \"5-8 words. PUNCHY, SHOCKING, HIGH IMPACT.\", "
+        f"\"summary\": \"EXACTLY 20-25 words. HIGH ENERGY FACTS. No filler.\"}}"
+    )
     v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
-    # 2. Caption + STRATEGIC HASHTAGS
+    # 2. Caption + SMART HASHTAGS
     cap_prompt = (
         f"Write a caption for: '{art['title']}'. "
-        f"Structure: Hook, 3 bullets, question. "
+        f"Style: Viral News Anchor. "
+        f"Structure: \n1. A shocking Hook question.\n2. Three quick bullet points.\n3. A debate question.\n"
         f"At the end, generate exactly 15 hashtags:\n"
-        f"- 10 Specific/Niche tags relevant to the topic (e.g. #SpaceX #Starship).\n"
-        f"- 5 Broad/Viral tags (e.g. #fyp #breakingnews #trending).\n"
+        f"- 10 Specific/Niche tags (e.g. #SpaceX)\n"
+        f"- 5 Broad/Viral tags (e.g. #fyp #breakingnews)\n"
         f"Limit total response to 2000 chars."
     )
     caption = client.chat.completions.create(messages=[{"role":"user","content":cap_prompt}], model=model).choices[0].message.content.strip()
     
     # 3. Deep Dive
-    div_prompt = f"250-word deep dive starting with '🧠 DEEP DIVE:' for: {art['title']}\nContext: {ctx}"
+    div_prompt = f"250-word deep dive starting with '🧠 DEEP DIVE:' for: {art['title']}\nContext: {ctx}. Tone: Informative but casual/fun."
     comment = client.chat.completions.create(messages=[{"role":"user","content":div_prompt}], model=model).choices[0].message.content.strip()
     
     return v_data['mood'], v_data['headline'], v_data['summary'], caption, comment
@@ -153,7 +166,14 @@ def render_video(art, mood, hl, summ):
         return "final.mp4"
     except: return None
 
-# --- 4. PLATFORM POSTING (BINARY UPLOAD FIX) ---
+# --- 4. PLATFORM POSTING ---
+
+def send_telegram(msg):
+    try:
+        if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_ADMIN_ID:
+            requests.post(f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage", 
+                          data={"chat_id": config.TELEGRAM_ADMIN_ID, "text": msg})
+    except: pass
 
 def post_instagram(path, cap, comm):
     log("INSTA", "Posting with OLD Token...")
@@ -198,8 +218,6 @@ def post_facebook(path, cap, deep_dive):
         with open(path, 'rb') as f:
             video_data = f.read()
             
-        # FIX: Sending RAW bytes (data=video_data) instead of files=...
-        # Also adding the mandatory 'offset' and 'file_size' headers
         upload_res = requests.post(
             upload_url,
             headers={
@@ -210,7 +228,6 @@ def post_facebook(path, cap, deep_dive):
             data=video_data 
         )
         
-        # DEBUG: Check response
         if upload_res.status_code != 200:
             log("FB_UPLOAD_FAIL", f"Status: {upload_res.status_code} | Error: {upload_res.text}")
             return False
@@ -264,15 +281,8 @@ if __name__ == "__main__":
     ensure_assets()
     log("BOT", "Empire Engine V3 Running...")
     
-    current_hour = datetime.utcnow().hour
-    
-    # --- SCHEDULE CHECK ---
-    should_post_yt = (current_hour % 4 == 0)
-    
-    # FORCE TEST MODE: Uncomment below to force YouTube NOW
-    # should_post_yt = True 
-    
-    log("SCHEDULER", f"Current UTC Hour: {current_hour}. Posting to YouTube? {'YES' if should_post_yt else 'NO (Saving Quota)'}")
+    # Logic: "One Run = One Post Everywhere"
+    # The Cron Job (*/4) controls the frequency (6 times a day).
     
     cands = fetch_news()
     if not cands: log("BOT", "No News.")
@@ -284,14 +294,14 @@ if __name__ == "__main__":
                 m, h, s, cp, cm = generate_content(art, ctx)
                 v = render_video(art, m, h, s)
                 if v:
+                    # POST EVERYWHERE
                     ig = post_instagram(v, cp, cm)
                     fb = post_facebook(v, cp, cm)
+                    yt = post_youtube(v, h + " #shorts", cm)
                     
-                    yt = False
-                    if should_post_yt:
-                        yt = post_youtube(v, h + " #shorts", cm)
-                    else:
-                        log("YOUTUBE", "Skipping this hour to save quota.")
+                    # TELEGRAM REPORT
+                    status_msg = f"📰 *Empire Bot Update*\n\nTitle: {art['title']}\n\n✅ IG: {ig}\n✅ FB: {fb}\n✅ YT: {yt}"
+                    send_telegram(status_msg)
                     
                     if ig or fb or yt:
                         with open("history_v2.txt", "a") as f: f.write(f"{art['title']}|{art['url']}\n")
