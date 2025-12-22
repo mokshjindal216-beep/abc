@@ -15,10 +15,7 @@ cloudinary.config(cloud_name=config.CLOUDINARY_CLOUD_NAME, api_key=config.CLOUDI
 # --- 1. SETUP & ASSETS ---
 PREMIUM_SOURCES = ["reuters", "associated-press", "bbc-news", "cnn", "bloomberg", "the-wall-street-journal", "the-washington-post", "time", "wired", "the-verge", "techcrunch", "business-insider", "fortune", "cnbc", "abc-news", "cbs-news", "nbc-news", "politico", "axios", "the-hill", "usa-today", "the-independent", "the-telegraph", "france-24", "dw-news", "scmp", "the-hindu", "the-times-of-india", "variety", "hollywood-reporter", "rolling-stone", "ign", "espn", "bleacher-report", "national-geographic", "new-scientist", "scientific-american", "nature", "the-economist", "hacker-news", "ars-technica", "engadget", "gizmodo", "mashable", "vox", "new-york-magazine", "the-atlantic"]
 
-# REMOVED: Old static tags. We now generate smart tags dynamically.
-
 def log(step, msg): 
-    # Enhanced Logging: Prints clearly to the console
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔹 {step.upper()}: {msg}")
 
 def ensure_assets():
@@ -75,13 +72,14 @@ def generate_content(art, ctx):
     v_prompt = f"Analyze: {art['title']}\nContext: {ctx}\nReturn JSON: {{\"mood\": \"CRISIS/TECH/GENERAL\", \"headline\": \"5-8 words\", \"summary\": \"EXACTLY 20-25 words UNIQUE facts\"}}"
     v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
-    # 2. Caption + Smart Hashtags (UPDATED)
-    # Asking for 15 specific tags relevant to the news topic
+    # 2. Caption + STRATEGIC HASHTAGS
+    # The prompt explicitly asks for a mix of Niche (Low Competition) and Broad (High Reach) tags.
     cap_prompt = (
-        f"Write a caption for this news: '{art['title']}'. "
-        f"Structure: Hook, 3 quick bullet points, and a question. "
-        f"At the very end, generate 15 relevant, high-traffic hashtags specific to this news topic (mix of broad and niche). "
-        f"Do NOT use generic tags like #news only. "
+        f"Write a caption for: '{art['title']}'. "
+        f"Structure: Hook, 3 bullets, question. "
+        f"At the end, generate exactly 15 hashtags:\n"
+        f"- 10 Specific/Niche tags relevant to the topic (e.g. #SpaceX #Starship).\n"
+        f"- 5 Broad/Viral tags (e.g. #fyp #breakingnews #trending).\n"
         f"Limit total response to 2000 chars."
     )
     caption = client.chat.completions.create(messages=[{"role":"user","content":cap_prompt}], model=model).choices[0].message.content.strip()
@@ -156,7 +154,7 @@ def render_video(art, mood, hl, summ):
         return "final.mp4"
     except: return None
 
-# --- 4. PLATFORM POSTING (ENHANCED LOGGING) ---
+# --- 4. PLATFORM POSTING ---
 
 def post_instagram(path, cap, comm):
     log("INSTA", "Posting with OLD Token...")
@@ -186,7 +184,7 @@ def post_facebook(path, cap, deep_dive):
     log("FB", f"Posting to New Page ID: {config.FB_PAGE_ID}...")
     full_desc = f"{cap}\n\n---\n{deep_dive}"
     try:
-        # 1. Start
+        # 1. Start Upload
         init = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "start", "access_token": config.FB_ACCESS_TOKEN}).json()
         if 'video_id' not in init: 
             log("FB_INIT_FAIL", f"Could not start upload. Response: {init}")
@@ -195,9 +193,13 @@ def post_facebook(path, cap, deep_dive):
         vid_id = init['video_id']
         log("FB_DEBUG", f"Video ID Reserved: {vid_id}")
         
-        # 2. Upload
+        # 2. Upload Bytes
         with open(path, 'rb') as f:
             requests.post(init['upload_url'], headers={"Authorization": f"OAuth {config.FB_ACCESS_TOKEN}"}, files={'video_file_chunk': f})
+        
+        # --- SAFE WAIT ---
+        log("FB_DEBUG", "Waiting 30s for processing...")
+        time.sleep(30)
         
         # 3. Publish
         fin = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "finish", "video_id": vid_id, "video_state": "PUBLISHED", "description": full_desc[:5000], "access_token": config.FB_ACCESS_TOKEN}).json()
@@ -214,14 +216,14 @@ def post_facebook(path, cap, deep_dive):
         return False
 
 def post_youtube(path, title, deep_dive):
-    log("YOUTUBE", "Posting Short (Limited Schedule)...")
+    log("YOUTUBE", "Posting Short...")
     try:
         creds = Credentials(None, refresh_token=config.YT_REFRESH_TOKEN, token_uri="https://oauth2.googleapis.com/token", client_id=config.YT_CLIENT_ID, client_secret=config.YT_CLIENT_SECRET)
         youtube = build("youtube", "v3", credentials=creds)
         request = youtube.videos().insert(
             part="snippet,status",
             body={
-                "snippet": {"title": title[:100], "description": deep_dive, "tags": ["shorts", "news"]}, # Hashtags are now in deep_dive/caption
+                "snippet": {"title": title[:100], "description": deep_dive, "tags": ["shorts", "news"]}, 
                 "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
             },
             media_body=MediaFileUpload(path)
@@ -243,7 +245,11 @@ if __name__ == "__main__":
     log("BOT", "Empire Engine V3 Running...")
     
     current_hour = datetime.utcnow().hour
+    
+    # --- SCHEDULE CHECK ---
+    # Runs at 00, 04, 08, 12, 16, 20 UTC (6 times a day)
     should_post_yt = (current_hour % 4 == 0)
+    
     log("SCHEDULER", f"Current UTC Hour: {current_hour}. Posting to YouTube? {'YES' if should_post_yt else 'NO (Saving Quota)'}")
     
     cands = fetch_news()
@@ -258,9 +264,12 @@ if __name__ == "__main__":
                 if v:
                     ig = post_instagram(v, cp, cm)
                     fb = post_facebook(v, cp, cm)
+                    
                     yt = False
                     if should_post_yt:
                         yt = post_youtube(v, h + " #shorts", cm)
+                    else:
+                        log("YOUTUBE", "Skipping this hour to save quota.")
                     
                     if ig or fb or yt:
                         with open("history_v2.txt", "a") as f: f.write(f"{art['title']}|{art['url']}\n")
