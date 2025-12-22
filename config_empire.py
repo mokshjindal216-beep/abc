@@ -9,13 +9,13 @@ CLOUDINARY_CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME")
 CLOUDINARY_API_KEY = os.environ.get("CLOUDINARY_API_KEY")
 CLOUDINARY_API_SECRET = os.environ.get("CLOUDINARY_API_SECRET")
 
-# SOCIAL CREDENTIALS
-# Note: We use IG_ACCESS_TOKEN for both Instagram and to fetch the FB Page Token
+# INSTAGRAM (Old Working Keys)
 IG_USER_ID = os.environ.get("IG_USER_ID")
 IG_ACCESS_TOKEN = os.environ.get("IG_ACCESS_TOKEN")
 
-# FACEBOOK (Just the Page ID is needed now)
+# FACEBOOK (New Separate Keys)
 FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
+FB_ACCESS_TOKEN = os.environ.get("FB_ACCESS_TOKEN")
 
 # YOUTUBE
 YT_REFRESH_TOKEN = os.environ.get("YT_REFRESH_TOKEN")
