@@ -3,7 +3,7 @@ name: Empire Bot V3 (IG+YT+FB)
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'  # Runs EVERY HOUR
+    - cron: '0 */4 * * *'  # Runs EVERY HOUR
 
 permissions:
   contents: write
