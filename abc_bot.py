@@ -50,10 +50,26 @@ def ensure_assets():
 def get_best_groq_model(client):
     try:
         models = client.models.list()
+        
+        # 1. Priority: The powerful Llama 3.3 70B
         for m in models.data:
             if "llama-3.3-70b" in m.id: return m.id
+        
+        # 2. Fallback A: Any older Llama 3 70B
+        for m in models.data:
+            if "llama3-70b" in m.id: return m.id
+
+        # 3. Fallback B: Mixtral
+        for m in models.data:
+            if "mixtral-8x7b" in m.id: return m.id
+            
+        # 4. DOOMSDAY FAIL-SAFE: Grab the FIRST available model so bot NEVER crashes
+        if models.data:
+            return models.data[0].id
+            
         return "llama-3.3-70b-versatile"
-    except: return "llama-3.3-70b-versatile"
+    except: 
+        return "llama-3.3-70b-versatile"
 
 def is_garbage(title):
     t = title.lower()
