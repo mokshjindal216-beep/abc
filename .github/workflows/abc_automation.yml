@@ -1,0 +1,37 @@
+name: ABC Bot Automation
+
+on:
+  schedule:
+    - cron: '0 */4 * * *' # Runs every 4 hours
+  workflow_dispatch:      # Allows manual run
+
+jobs:
+  run_bot:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y imagemagick ffmpeg ghostscript
+
+    - name: Install Python Libraries
+      run: |
+        pip install moviepy==1.0.3 numpy pillow requests proglog groq newspaper3k duckduckgo-search google-auth google-auth-oauthlib google-api-python-client cloudinary lxml_html_clean
+
+    - name: Create Config File from Secret
+      env:
+        CONFIG_CONTENT: ${{ secrets.CONFIG_ABC }}
+      run: |
+        echo "$CONFIG_CONTENT" > config_abc.py
+
+    - name: Run ABC Bot
+      run: python abc_bot.py
