@@ -161,7 +161,7 @@ def render_video(art, mood, hl, summ):
         # AUDIO VOLUME REDUCED BY 25% (0.75)
         final = CompositeVideoClip([clip, ImageClip("overlay.png").set_duration(6)])
         if os.path.exists(cfg["a"]): 
-            final = final.set_audio(AudioFileClip(cfg["a"]).subclip(0,6).volumex(0.75))
+            final = final.set_audio(AudioFileClip(cfg["a"]).subclip(0,6).volumex(0.35))
             
         final.write_videofile("final.mp4", fps=24, codec='libx264', audio_codec='aac', preset='ultrafast', logger=None)
         return "final.mp4"
