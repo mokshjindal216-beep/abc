@@ -1,4 +1,4 @@
-import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, config_abc as config, difflib, re, random
+import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, difflib, re, random
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageFilter
 from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip, AudioFileClip, vfx
 from groq import Groq
@@ -9,8 +9,24 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+# --- CONFIGURATION (READS DIRECTLY FROM YOUR SECRETS) ---
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
+CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
+CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
+IG_USER_ID = os.getenv("IG_USER_ID")
+IG_ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN")
+FB_PAGE_ID = os.getenv("FB_PAGE_ID")
+FB_ACCESS_TOKEN = os.getenv("FB_ACCESS_TOKEN")
+YT_REFRESH_TOKEN = os.getenv("YT_REFRESH_TOKEN")
+YT_CLIENT_ID = os.getenv("YT_CLIENT_ID")
+YT_CLIENT_SECRET = os.getenv("YT_CLIENT_SECRET")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_ADMIN_ID = os.getenv("TELEGRAM_ADMIN_ID")
+
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-cloudinary.config(cloud_name=config.CLOUDINARY_CLOUD_NAME, api_key=config.CLOUDINARY_API_KEY, api_secret=config.CLOUDINARY_API_SECRET)
+cloudinary.config(cloud_name=CLOUDINARY_CLOUD_NAME, api_key=CLOUDINARY_API_KEY, api_secret=CLOUDINARY_API_SECRET)
 
 # --- 1. SETUP & ASSETS ---
 PREMIUM_SOURCES = [
@@ -30,7 +46,7 @@ def ensure_assets():
         if not os.path.exists(f"assets/audio/{n}.mp3"): os.system(f"wget -q -O assets/audio/{n}.mp3 {u}")
     if not os.path.exists("Anton.ttf"): os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
 
-# --- 2. INTELLIGENCE (PRESERVED EXACTLY) ---
+# --- 2. INTELLIGENCE ---
 def get_best_groq_model(client):
     try:
         models = client.models.list()
@@ -53,7 +69,8 @@ def fetch_news():
     log("NEWS", "Sourcing from Elite List...")
     cands = []
     try:
-        r = requests.get(f"https://newsapi.org/v2/top-headlines?sources={','.join(PREMIUM_SOURCES)}&apiKey={config.NEWS_API_KEY}", timeout=15).json()
+        # Uses NEWS_API_KEY directly
+        r = requests.get(f"https://newsapi.org/v2/top-headlines?sources={','.join(PREMIUM_SOURCES)}&apiKey={NEWS_API_KEY}", timeout=15).json()
         if r.get('status') == 'ok': cands.extend([a for a in r['articles'] if a.get('urlToImage') and not is_garbage(a['title'])])
     except: pass
     return cands[:15]
@@ -69,10 +86,10 @@ def perform_research(article):
     except: return article.get('description', '')
 
 def generate_content(art, ctx):
-    client = Groq(api_key=config.GROQ_API_KEY)
+    client = Groq(api_key=GROQ_API_KEY)
     model = get_best_groq_model(client)
     
-    # 1. Video Data - VIRAL HOOKS
+    # 1. Video Data
     v_prompt = (
         f"Analyze this news: {art['title']}\nContext: {ctx}\n"
         f"Goal: Create a SCRIPT for a viral short video.\n"
@@ -82,7 +99,7 @@ def generate_content(art, ctx):
     )
     v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
-    # 2. Caption + SEO KEYWORDS
+    # 2. Caption
     cap_prompt = (
         f"Write a caption for: '{art['title']}'. "
         f"Style: Viral News Anchor. "
@@ -97,7 +114,7 @@ def generate_content(art, ctx):
     
     return v_data['mood'], v_data['headline'], v_data['summary'], caption, comment
 
-# --- 3. TITANIUM RENDERER (UPGRADED) ---
+# --- 3. TITANIUM RENDERER (Volume 20-25%, Skins, Grain) ---
 def fit_text(draw, text, max_w, max_h, start_size):
     size = start_size
     while size > 25:
@@ -109,7 +126,7 @@ def fit_text(draw, text, max_w, max_h, start_size):
         size -= 4
     return ImageFont.load_default(), textwrap.wrap(text, width=30)
 
-def add_film_grain(img, opacity=0.04): # 4% Invisible Shield
+def add_film_grain(img, opacity=0.04): # 4% Ghost Grain
     arr = np.array(img)
     h, w, c = arr.shape
     noise = np.random.randint(0, 255, (h, w, c), dtype='uint8')
@@ -125,7 +142,6 @@ def render_video(art, mood, hl, summ):
     
     try:
         r = requests.get(art['urlToImage'], timeout=15)
-        if r.status_code != 200 or len(r.content) < 1000: raise Exception("Invalid Image")
         with open("bg.jpg", "wb") as f: f.write(r.content)
         Image.open("bg.jpg").verify()
     except Exception as e: return None
@@ -136,27 +152,23 @@ def render_video(art, mood, hl, summ):
         draw = ImageDraw.Draw(overlay)
         grad = Image.new('L', (W, H), 0)
         
-        # --- VISUAL RANDOMIZER (SKINS) ---
+        # --- SKINS ---
         skin = random.choice(["classic", "headline", "poster"])
         log("RENDER", f"Applying Skin: {skin.upper()}")
 
         if skin == "classic":
-            # 1. CLASSIC (Bottom Text)
             for y in range(int(H*0.45), H): ImageDraw.Draw(grad).line([(0,y),(W,y)], fill=int((y-H*0.45)/(H*0.55)*255))
             overlay.paste(Image.new('RGBA',(W,H),(0,0,0,240)), (0,0), mask=grad)
-            
             f_s = ImageFont.truetype("Anton.ttf", 35)
             sn = f" {art['source']['name'].upper()} "
             draw.rounded_rectangle([(60,150), (60+draw.textlength(sn, f_s)+20, 210)], 12, fill=cfg["c"])
             draw.text((70,160), sn, font=f_s, fill="black")
-            
             cy = 600
             f_h, h_l = fit_text(draw, hl.upper(), 900, 600, 140)
             for l in h_l:
                 draw.text((65, cy+5), l, font=f_h, fill="black")
                 draw.text((60, cy), l, font=f_h, fill=cfg["c"])
                 cy += f_h.size + 15
-            
             f_u, s_l = fit_text(draw, summ, 900, 1500-cy, 100)
             cy += 30
             for l in s_l:
@@ -164,21 +176,17 @@ def render_video(art, mood, hl, summ):
                 cy += f_u.size + 12
 
         elif skin == "headline":
-            # 2. HEADLINE (Top Box - White Text)
             overlay.paste(Image.new('RGBA',(W,H),(0,0,0,100)), (0,0))
             box_color = (139, 0, 0, 230) if "crisis" in mood.lower() else (20, 20, 20, 230)
             draw.rectangle([(0, 200), (W, 700)], fill=box_color)
-            
             cy = 250
             f_h, h_l = fit_text(draw, hl.upper(), 1000, 450, 140)
             for l in h_l:
                 draw.text((50, cy), l, font=f_h, fill="white")
                 cy += f_h.size + 10
-            
             f_s = ImageFont.truetype("Anton.ttf", 40)
             sn = f" SOURCE: {art['source']['name'].upper()} "
             draw.text((50, 1600), sn, font=f_s, fill=cfg["c"])
-            
             cy = 1300
             f_u, s_l = fit_text(draw, summ, 1000, 400, 90)
             for l in s_l:
@@ -186,17 +194,14 @@ def render_video(art, mood, hl, summ):
                 cy += f_u.size + 10
 
         elif skin == "poster":
-            # 3. POSTER (Center Big - 4% Grain)
             overlay.paste(Image.new('RGBA',(W,H),(0,0,0,80)), (0,0))
             f_h, h_l = fit_text(draw, hl.upper(), 950, 800, 160)
             total_h = sum([f_h.size for _ in h_l])
             start_y = (H - total_h) / 2 - 100
-            
             for l in h_l:
                 draw.text((60, start_y+5), l, font=f_h, fill="black")
                 draw.text((55, start_y), l, font=f_h, fill=cfg["c"])
                 start_y += f_h.size + 15
-                
             f_u, s_l = fit_text(draw, summ, 900, 500, 80)
             start_y += 50
             for l in s_l:
@@ -205,166 +210,82 @@ def render_video(art, mood, hl, summ):
 
         overlay.save("overlay.png")
         
-        # BG Processing
         img = Image.open("bg.jpg").convert("RGB")
         bw, bh = img.size; ratio = 1080/1920
         if bw/bh > ratio: nw = bh * ratio; img = img.crop(((bw-nw)/2, 0, (bw+nw)/2, bh))
         else: nh = bw/ratio; img = img.crop((0, (bh-nh)/2, bw, (bh-nh)/2 + nh))
         img = img.resize((1080, 1920), Image.LANCZOS)
         
-        # ADD 4% GRAIN (Only on Poster)
-        if skin == "poster":
-            img = add_film_grain(img, opacity=0.04)
-            
+        if skin == "poster": img = add_film_grain(img, opacity=0.04) # Grain
         img.save("temp_bg.jpg")
         
-        # RENDER CLIP (Original Zoom 0.04)
         clip = ImageClip("temp_bg.jpg").set_duration(6).fl(lambda gf, t: np.array(Image.fromarray(gf(t)).resize([int(d*(1+0.04*t)) for d in Image.fromarray(gf(t)).size], Image.BILINEAR).crop((0,0,1080,1920))))
-        
         final = CompositeVideoClip([clip, ImageClip("overlay.png").set_duration(6)])
         
         # AUDIO JITTER + VOLUME 20-25%
         if os.path.exists(cfg["a"]): 
-            vol = random.uniform(0.20, 0.25) # 20% to 25% Volume
-            speed = random.uniform(0.98, 1.02) # Speed Jitter
-            
-            audio = AudioFileClip(cfg["a"]).subclip(0,7)
-            audio = audio.fx(vfx.speedx, speed)
-            audio = audio.volumex(vol)
-            audio = audio.subclip(0,6)
-            
+            vol = random.uniform(0.20, 0.25)
+            speed = random.uniform(0.98, 1.02)
+            audio = AudioFileClip(cfg["a"]).subclip(0,7).fx(vfx.speedx, speed).volumex(vol).subclip(0,6)
             final = final.set_audio(audio)
             
-        # BITRATE SCRAMBLER
-        random_bitrate = str(random.randint(3000, 5500)) + "k"
-        
-        final.write_videofile("final.mp4", fps=24, codec='libx264', audio_codec='aac', bitrate=random_bitrate, preset='ultrafast', logger=None)
+        final.write_videofile("final.mp4", fps=24, codec='libx264', audio_codec='aac', bitrate=str(random.randint(3000, 5500))+"k", preset='ultrafast', logger=None)
         return "final.mp4"
     except Exception as e:
         log("RENDER_FAIL", str(e))
         return None
 
-# --- 4. PLATFORM POSTING (PRESERVED EXACTLY) ---
-
+# --- 4. POSTING LOGIC ---
 def send_telegram(msg):
     try:
-        if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_ADMIN_ID:
-            requests.post(f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage", 
-                          data={"chat_id": config.TELEGRAM_ADMIN_ID, "text": msg})
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_ID:
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_ADMIN_ID, "text": msg})
     except: pass
 
 def post_instagram(path, cap, comm):
-    log("INSTA", "Posting with OLD Token...")
     try:
         up = cloudinary.uploader.upload(path, resource_type="video")
-        r = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media", data={"media_type": "REELS", "video_url": up['secure_url'], "caption": cap, "access_token": config.IG_ACCESS_TOKEN}).json()
+        r = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media", data={"media_type": "REELS", "video_url": up['secure_url'], "caption": cap, "access_token": IG_ACCESS_TOKEN}).json()
         if 'id' in r:
             cid = r['id']
-            log("INSTA_DEBUG", f"Container Created: {cid}")
             for _ in range(15):
                 time.sleep(10)
-                s = requests.get(f"https://graph.facebook.com/v18.0/{cid}", params={"fields":"status_code", "access_token": config.IG_ACCESS_TOKEN}).json()
+                s = requests.get(f"https://graph.facebook.com/v18.0/{cid}", params={"fields":"status_code", "access_token": IG_ACCESS_TOKEN}).json()
                 if s.get('status_code') == 'FINISHED':
-                    p = requests.post(f"https://graph.facebook.com/v18.0/{config.IG_USER_ID}/media_publish", data={"creation_id": cid, "access_token": config.IG_ACCESS_TOKEN}).json()
+                    p = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media_publish", data={"creation_id": cid, "access_token": IG_ACCESS_TOKEN}).json()
                     if 'id' in p:
-                        log("INSTA_SUCCESS", f"Published ID: {p['id']}")
                         time.sleep(5)
-                        requests.post(f"https://graph.facebook.com/v18.0/{p['id']}/comments", data={"message": comm, "access_token": config.IG_ACCESS_TOKEN})
+                        requests.post(f"https://graph.facebook.com/v18.0/{p['id']}/comments", data={"message": comm, "access_token": IG_ACCESS_TOKEN})
                         return True
-        log("INSTA_FAIL", f"Raw Response: {r}")
         return False
-    except Exception as e:
-        log("INSTA_ERROR", str(e))
-        return False
+    except: return False
 
 def post_facebook(path, cap, deep_dive):
-    log("FB", f"Posting to New Page ID: {config.FB_PAGE_ID}...")
-    full_desc = f"{cap}\n\n---\n{deep_dive}"
     try:
-        init = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "start", "access_token": config.FB_ACCESS_TOKEN}).json()
-        if 'video_id' not in init: 
-            log("FB_INIT_FAIL", f"Could not start upload. Response: {init}")
-            return False
-        
-        vid_id = init['video_id']
-        upload_url = init['upload_url']
-        log("FB_DEBUG", f"Video ID Reserved: {vid_id}")
-        
-        file_size = os.path.getsize(path)
-        with open(path, 'rb') as f:
-            video_data = f.read()
-            
-        upload_res = requests.post(
-            upload_url,
-            headers={"Authorization": f"OAuth {config.FB_ACCESS_TOKEN}", "offset": "0", "file_size": str(file_size)},
-            data=video_data 
-        )
-        
-        if upload_res.status_code != 200:
-            log("FB_UPLOAD_FAIL", f"Status: {upload_res.status_code} | Error: {upload_res.text}")
-            return False
-        else:
-            log("FB_UPLOAD_SUCCESS", "Binary chunks transferred.")
-
-        log("FB_DEBUG", "Waiting 30s for processing...")
+        init = requests.post(f"https://graph.facebook.com/v18.0/{FB_PAGE_ID}/video_reels", data={"upload_phase": "start", "access_token": FB_ACCESS_TOKEN}).json()
+        if 'video_id' not in init: return False
+        vid_id, upload_url = init['video_id'], init['upload_url']
+        with open(path, 'rb') as f: requests.post(upload_url, headers={"Authorization": f"OAuth {FB_ACCESS_TOKEN}", "offset": "0", "file_size": str(os.path.getsize(path))}, data=f.read())
         time.sleep(30)
-        
-        fin = requests.post(f"https://graph.facebook.com/v18.0/{config.FB_PAGE_ID}/video_reels", data={"upload_phase": "finish", "video_id": vid_id, "video_state": "PUBLISHED", "description": full_desc[:5000], "access_token": config.FB_ACCESS_TOKEN}).json()
-        
-        if 'success' in fin and fin['success']:
-            log("FB_SUCCESS", "Video Published Successfully.")
-            return True
-        else:
-            log("FB_PUBLISH_FAIL", f"Final Response: {fin}")
-            return False
-            
-    except Exception as e:
-        log("FB_CRITICAL_ERROR", str(e))
-        return False
+        fin = requests.post(f"https://graph.facebook.com/v18.0/{FB_PAGE_ID}/video_reels", data={"upload_phase": "finish", "video_id": vid_id, "video_state": "PUBLISHED", "description": f"{cap}\n\n---\n{deep_dive}", "access_token": FB_ACCESS_TOKEN}).json()
+        return 'success' in fin and fin['success']
+    except: return False
 
 def post_youtube(path, title, description, tags):
-    log("YOUTUBE", "Posting Short with SEO...")
     try:
-        creds = Credentials(None, refresh_token=config.YT_REFRESH_TOKEN, token_uri="https://oauth2.googleapis.com/token", client_id=config.YT_CLIENT_ID, client_secret=config.YT_CLIENT_SECRET)
+        creds = Credentials(None, refresh_token=YT_REFRESH_TOKEN, token_uri="https://oauth2.googleapis.com/token", client_id=YT_CLIENT_ID, client_secret=YT_CLIENT_SECRET)
         youtube = build("youtube", "v3", credentials=creds)
-        
-        # EXTRACT TAGS FROM CAPTION
         tag_list = [t.strip("#") for t in tags.split() if t.startswith("#")][:15]
-        if not tag_list: tag_list = ["shorts", "news", "viral"]
+        request = youtube.videos().insert(part="snippet,status", body={"snippet": {"title": title[:100], "description": description, "tags": tag_list}, "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}, media_body=MediaFileUpload(path))
+        return 'id' in request.execute()
+    except: return False
 
-        request = youtube.videos().insert(
-            part="snippet,status",
-            body={
-                "snippet": {
-                    "title": title[:100], 
-                    "description": description, 
-                    "tags": tag_list
-                }, 
-                "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
-            },
-            media_body=MediaFileUpload(path)
-        )
-        res = request.execute()
-        if 'id' in res:
-            log("YT_SUCCESS", f"Video ID: {res['id']}")
-            return True
-        else:
-            log("YT_FAIL", f"API Response: {res}")
-            return False
-    except Exception as e:
-        log("YT_ERROR", f"Exception: {str(e)}")
-        return False
-
-# --- 5. EXECUTION LOOP ---
 if __name__ == "__main__":
     ensure_assets()
-    log("BOT", "Empire Engine V3 Running...")
-    
+    log("BOT", "Empire Titanium Engine V4 (Direct Secrets)...")
     cands = fetch_news()
-    if not cands: log("BOT", "No News.")
-    else:
-        for i, art in enumerate(cands):
-            log("BOT", f"Candidate #{i+1}: {art['title']}")
+    if cands:
+        for art in cands:
             try:
                 ctx = perform_research(art)
                 m, h, s, cp, cm = generate_content(art, ctx)
@@ -372,17 +293,11 @@ if __name__ == "__main__":
                 if v:
                     ig = post_instagram(v, cp, cm)
                     fb = post_facebook(v, cp, cm)
-                    
-                    yt_desc = f"{cp}\n\n---\n{cm}"
-                    yt = post_youtube(v, h + " #shorts", yt_desc, cp)
-                    
-                    status_msg = f"📰 *Empire Bot Update*\n\nTitle: {art['title']}\n\n✅ IG: {ig}\n✅ FB: {fb}\n✅ YT: {yt}"
-                    send_telegram(status_msg)
-                    
+                    yt = post_youtube(v, h + " #shorts", f"{cp}\n\n---\n{cm}", cp)
+                    msg = f"📰 {art['title']}\nIG:{ig} FB:{fb} YT:{yt}"
+                    send_telegram(msg)
                     if ig or fb or yt:
                         with open("history_v2.txt", "a") as f: f.write(f"{art['title']}|{art['url']}\n")
-                        log("FINAL_STATUS", f"IG:{ig} | FB:{fb} | YT:{yt}")
+                        log("SUCCESS", msg)
                         break
-                    else: log("WARN", "All Uploads Failed.")
-                else: log("WARN", "Render Failed.")
-            except Exception as e: log("ERROR", e)
+            except Exception as e: log("ERROR", str(e))
