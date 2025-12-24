@@ -240,7 +240,7 @@ def render_video(art, mood, hl, summ):
         
         # AUDIO JITTER + VOLUME 20-25%
         if os.path.exists(cfg["a"]): 
-            vol = random.uniform(0.05, 0.08)
+            vol = random.uniform(0.01, 0.03)
             speed = random.uniform(0.98, 1.02)
             audio = AudioFileClip(cfg["a"]).subclip(0,7).fx(vfx.speedx, speed).volumex(vol).subclip(0,6)
             final = final.set_audio(audio)
