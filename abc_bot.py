@@ -50,23 +50,14 @@ def ensure_assets():
 def get_best_groq_model(client):
     try:
         models = client.models.list()
-        
-        # 1. Priority: The powerful Llama 3.3 70B
         for m in models.data:
             if "llama-3.3-70b" in m.id: return m.id
-        
-        # 2. Fallback A: Any older Llama 3 70B
         for m in models.data:
             if "llama3-70b" in m.id: return m.id
-
-        # 3. Fallback B: Mixtral
         for m in models.data:
             if "mixtral-8x7b" in m.id: return m.id
-            
-        # 4. DOOMSDAY FAIL-SAFE: Grab the FIRST available model so bot NEVER crashes
         if models.data:
             return models.data[0].id
-            
         return "llama-3.3-70b-versatile"
     except: 
         return "llama-3.3-70b-versatile"
@@ -85,7 +76,6 @@ def fetch_news():
     log("NEWS", "Sourcing from Elite List...")
     cands = []
     try:
-        # Uses NEWS_API_KEY directly
         r = requests.get(f"https://newsapi.org/v2/top-headlines?sources={','.join(PREMIUM_SOURCES)}&apiKey={NEWS_API_KEY}", timeout=15).json()
         if r.get('status') == 'ok': cands.extend([a for a in r['articles'] if a.get('urlToImage') and not is_garbage(a['title'])])
     except: pass
@@ -105,7 +95,6 @@ def generate_content(art, ctx):
     client = Groq(api_key=GROQ_API_KEY)
     model = get_best_groq_model(client)
     
-    # 1. Video Data
     v_prompt = (
         f"Analyze this news: {art['title']}\nContext: {ctx}\n"
         f"Goal: Create a SCRIPT for a viral short video.\n"
@@ -115,7 +104,6 @@ def generate_content(art, ctx):
     )
     v_data = json.loads(client.chat.completions.create(messages=[{"role":"user","content":v_prompt}], model=model, response_format={"type": "json_object"}).choices[0].message.content)
     
-    # 2. Caption
     cap_prompt = (
         f"Write a caption for: '{art['title']}'. "
         f"Style: Viral News Anchor. "
@@ -124,13 +112,12 @@ def generate_content(art, ctx):
     )
     caption = client.chat.completions.create(messages=[{"role":"user","content":cap_prompt}], model=model).choices[0].message.content.strip()
     
-    # 3. Deep Dive
     div_prompt = f"250-word deep dive starting with '🧠 DEEP DIVE:' for: {art['title']}\nContext: {ctx}. Tone: Informative but casual/fun."
     comment = client.chat.completions.create(messages=[{"role":"user","content":div_prompt}], model=model).choices[0].message.content.strip()
     
     return v_data['mood'], v_data['headline'], v_data['summary'], caption, comment
 
-# --- 3. TITANIUM RENDERER (Volume 20-25%, Skins, Grain) ---
+# --- 3. TITANIUM RENDERER (VIRAL MODE: 3s + Silent Audio) ---
 def fit_text(draw, text, max_w, max_h, start_size):
     size = start_size
     while size > 25:
@@ -142,7 +129,7 @@ def fit_text(draw, text, max_w, max_h, start_size):
         size -= 4
     return ImageFont.load_default(), textwrap.wrap(text, width=30)
 
-def add_film_grain(img, opacity=0.04): # 4% Ghost Grain
+def add_film_grain(img, opacity=0.04):
     arr = np.array(img)
     h, w, c = arr.shape
     noise = np.random.randint(0, 255, (h, w, c), dtype='uint8')
@@ -232,19 +219,30 @@ def render_video(art, mood, hl, summ):
         else: nh = bw/ratio; img = img.crop((0, (bh-nh)/2, bw, (bh-nh)/2 + nh))
         img = img.resize((1080, 1920), Image.LANCZOS)
         
-        if skin == "poster": img = add_film_grain(img, opacity=0.04) # Grain
+        if skin == "poster": img = add_film_grain(img, opacity=0.04)
         img.save("temp_bg.jpg")
         
-        clip = ImageClip("temp_bg.jpg").set_duration(6).fl(lambda gf, t: np.array(Image.fromarray(gf(t)).resize([int(d*(1+0.04*t)) for d in Image.fromarray(gf(t)).size], Image.BILINEAR).crop((0,0,1080,1920))))
-        final = CompositeVideoClip([clip, ImageClip("overlay.png").set_duration(6)])
+        # CHANGED: 3-Second Viral Loop setup
+        clip = ImageClip("temp_bg.jpg").set_duration(3).fl(lambda gf, t: np.array(Image.fromarray(gf(t)).resize([int(1080 + 10 * t), 1920], Image.BILINEAR).crop((0,0,1080,1920))))
+        final = CompositeVideoClip([clip, ImageClip("overlay.png").set_duration(3)])
         
-        # AUDIO JITTER + VOLUME 20-25%
+        # AUDIO JITTER + SILENT MODE (0.1% - 0.5%)
         if os.path.exists(cfg["a"]): 
-            vol = random.uniform(0.01, 0.03)
+            # CHANGED: 0.001 to 0.005 is -50dB. Basically silent.
+            vol = random.uniform(0.001, 0.005) 
             speed = random.uniform(0.98, 1.02)
-            audio = AudioFileClip(cfg["a"]).subclip(0,7).fx(vfx.speedx, speed).volumex(vol).subclip(0,6)
+            
+            # CHANGED: Load 4s, trim to exactly 3s
+            audio = AudioFileClip(cfg["a"]).subclip(0,4) 
+            audio = audio.fx(vfx.speedx, speed)
+            audio = audio.volumex(vol)
+            audio = audio.subclip(0,3) # HARD CUT at 3s
+            
             final = final.set_audio(audio)
             
+        # FORCE FINAL DURATION to 3s (Safety Lock)
+        final = final.set_duration(3)
+
         final.write_videofile("final.mp4", fps=24, codec='libx264', audio_codec='aac', bitrate=str(random.randint(3000, 5500))+"k", preset='ultrafast', logger=None)
         return "final.mp4"
     except Exception as e:
