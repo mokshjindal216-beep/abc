@@ -229,7 +229,7 @@ def render_video(art, mood, hl, summ):
         # AUDIO JITTER + SILENT MODE (0.1% - 0.5%)
         if os.path.exists(cfg["a"]): 
             # CHANGED: 0.001 to 0.005 is -50dB. Basically silent.
-            vol = random.uniform(0.00061, 0.00095) 
+            vol = random.uniform(0.009, 0.005) 
             speed = random.uniform(0.98, 1.02)
             
             # CHANGED: Load 4s, trim to exactly 3s
