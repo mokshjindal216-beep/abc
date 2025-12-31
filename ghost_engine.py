@@ -1,4 +1,4 @@
-import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, difflib, re, random, math
+import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, difflib, re, random, math, io
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageEnhance, ImageOps, ImageFilter, ImageChops
 from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip, AudioFileClip, vfx, CompositeAudioClip
 from groq import Groq
@@ -28,9 +28,9 @@ TELEGRAM_ADMIN_ID = os.getenv("TELEGRAM_ADMIN_ID")
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 cloudinary.config(cloud_name=CLOUDINARY_CLOUD_NAME, api_key=CLOUDINARY_API_KEY, api_secret=CLOUDINARY_API_SECRET)
 
-# --- 1. ASSETS & SINGULARITY TOOLS ---
+# --- 1. ASSETS ---
 def log(step, msg): 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] ☣️ {step.upper()}: {msg}")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🧬 {step.upper()}: {msg}")
 
 def ensure_assets():
     os.makedirs('ghost_assets', exist_ok=True)
@@ -54,11 +54,10 @@ def ensure_assets():
         if not os.path.exists(f"ghost_assets/{n}.mp3"): os.system(f"wget -q -O ghost_assets/{n}.mp3 {u}")
 
 def get_random_agent():
-    agents = [
+    return random.choice([
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Safari/605.1.15"
-    ]
-    return random.choice(agents)
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
+    ])
 
 # --- 2. INTELLIGENCE ---
 def get_groq_model(client):
@@ -81,7 +80,7 @@ def is_garbage(title):
     return False
 
 def fetch_news():
-    log("NEWS", "Singularity scan...")
+    log("NEWS", "Mimicry scan active...")
     cands = []
     sources = ["reuters", "associated-press", "bloomberg", "bbc-news", "wired", "the-verge", "techcrunch", "cnn", "time", "business-insider"]
     random.shuffle(sources)
@@ -117,42 +116,30 @@ def analyze_story(art):
     cap = client.chat.completions.create(messages=[{"role":"user","content":f"Caption for: {art['title']}. Start with 'Source: {art['source']['name']}'. End with 10 hashtags."}], model=model).choices[0].message.content.strip()
     return data, cap
 
-# --- 3. SINGULARITY RENDERER (Signal Corruption) ---
+# --- 3. MIMICRY RENDERER (V10) ---
 def apply_chromatic_aberration(img):
-    # V9: Split channels and offset them physically
     r, g, b = img.split()
-    # Random offsets for R and B channels
     r = ImageChops.offset(r, random.randint(-4, 4), random.randint(-2, 2))
     b = ImageChops.offset(b, random.randint(-4, 4), random.randint(-2, 2))
     return Image.merge("RGB", (r, g, b))
 
 def generate_light_leak(w, h):
-    # V9: Create random orange/white blobs
     leak = Image.new('RGBA', (w, h), (0,0,0,0))
     draw = ImageDraw.Draw(leak)
-    
     for _ in range(random.randint(1, 3)):
-        x = random.randint(0, w)
-        y = random.randint(0, h)
+        x, y = random.randint(0, w), random.randint(0, h)
         radius = random.randint(200, 600)
         color = random.choice([(255, 200, 150, 40), (255, 255, 255, 30), (255, 100, 50, 20)])
         draw.ellipse((x-radius, y-radius, x+radius, y+radius), fill=color)
-        
     return leak.filter(ImageFilter.GaussianBlur(50))
 
-def apply_singularity_grade(img):
+def apply_mimicry_grade(img):
     img = img.convert("RGB")
-    # Chromatic Aberration
     img = apply_chromatic_aberration(img)
-    
-    # Random Saturation Jitter
     enhancer = ImageEnhance.Color(img)
     img = enhancer.enhance(random.uniform(0.8, 1.2))
-    
-    # Random Contrast Curve
     enhancer = ImageEnhance.Contrast(img)
     img = enhancer.enhance(random.uniform(0.9, 1.15))
-    
     return img
 
 def fit_text_jitter(draw, text, box_w, font_name, max_s):
@@ -170,10 +157,7 @@ def render_skin(img, data, source_name):
     layout = random.choice(["classic", "split", "boxed", "minimal", "poster"])
     font = random.choice(["Anton", "Oswald", "Roboto", "Bebas", "Lobster"])
     color = random.choice(["#E63946", "#FFD700", "#00F0FF", "#FFFFFF", "#FF5733"])
-    
-    # Heavy Jitter
-    jx = random.randint(-12, 12)
-    jy = random.randint(-12, 12)
+    jx, jy = random.randint(-12, 12), random.randint(-12, 12)
     
     overlay = Image.new('RGBA', (1080, 1920), (0,0,0,0))
     draw = ImageDraw.Draw(overlay)
@@ -182,54 +166,34 @@ def render_skin(img, data, source_name):
         grad = Image.new('L', (1080, 1000), 0)
         for y in range(1000): ImageDraw.Draw(grad).line([(0,y),(1080,y)], fill=int((y/1000)*255))
         overlay.paste(Image.new('RGBA', (1080,1000), (0,0,0,230)), (0, 920), mask=grad)
-        
         f, l = fit_text_jitter(draw, data['headline'], 1000, font, 100)
         y = 1100 + jy
-        for line in l:
-            draw.text((50+jx, y), line, font=f, fill="white")
-            y += f.size + 10
-            
+        for line in l: draw.text((50+jx, y), line, font=f, fill="white"); y += f.size + 10
     elif layout == "split":
         draw.rectangle([(0, 1200+jy), (1080, 1920)], fill="black")
         draw.rectangle([(50+jx, 1150+jy), (300+jx, 1220+jy)], fill=color) 
         draw.text((60+jx, 1160+jy), source_name, font=ImageFont.truetype(f"ghost_assets/{font}.ttf", 40), fill="black")
-        
         f, l = fit_text_jitter(draw, data['headline'], 900, font, 90)
         y = 1300 + jy
-        for line in l:
-            draw.text((50+jx, y), line, font=f, fill="white")
-            y += f.size + 10
-
+        for line in l: draw.text((50+jx, y), line, font=f, fill="white"); y += f.size + 10
     elif layout == "boxed":
         draw.rectangle([(100+jx, 800+jy), (980+jx, 1400+jy)], fill=(0,0,0,200), outline=color, width=5)
         f, l = fit_text_jitter(draw, data['headline'], 800, font, 80)
         y = 900 + jy
-        for line in l:
-            draw.text((150+jx, y), line, font=f, fill="white")
-            y += f.size + 10
-            
+        for line in l: draw.text((150+jx, y), line, font=f, fill="white"); y += f.size + 10
     elif layout == "minimal":
         f, l = fit_text_jitter(draw, data['headline'], 1000, font, 110)
         y = 250 + jy
-        for line in l:
-            draw.text((55+jx, y+5), line, font=f, fill="black")
-            draw.text((50+jx, y), line, font=f, fill="white")
-            y += f.size + 10
-            
+        for line in l: draw.text((55+jx, y+5), line, font=f, fill="black"); draw.text((50+jx, y), line, font=f, fill="white"); y += f.size + 10
     elif layout == "poster":
         f, l = fit_text_jitter(draw, data['headline'], 1000, font, 140)
         y = 500 + jy
-        for line in l:
-            draw.text((50+jx, y), line, font=f, fill=(255,255,255, 220), stroke_width=3, stroke_fill="black")
-            y += f.size + 15
+        for line in l: draw.text((50+jx, y), line, font=f, fill=(255,255,255, 220), stroke_width=3, stroke_fill="black"); y += f.size + 15
 
     if layout != "boxed":
         fb, lb = fit_text_jitter(draw, data['body'], 900, "Roboto", 45)
         yb = 1600 + jy
-        for line in lb:
-            draw.text((50+jx, yb), line, font=fb, fill="#E0E0E0")
-            yb += 50
-            
+        for line in lb: draw.text((50+jx, yb), line, font=fb, fill="#E0E0E0"); yb += 50
     return overlay
 
 def render_video(art, data):
@@ -238,90 +202,64 @@ def render_video(art, data):
     
     try:
         r = requests.get(art['urlToImage'], headers={"User-Agent": get_random_agent()}, timeout=15)
-        with open("raw.jpg", "wb") as f: f.write(r.content)
-        img = Image.open("raw.jpg").convert("RGB")
-        
-        # SMART CROP
+        # FIX: Robust Image Loading (Handle WebP/PNG/JPG)
+        try:
+            img = Image.open(io.BytesIO(r.content)).convert("RGB")
+        except:
+            return None # Skip broken images
+
         w, h = img.size
         tr = 1080/1920
         if w/h > tr:
-            nw = int(h*tr)
-            left = (w-nw)//2
-            img = img.crop((left, 0, left+nw, h))
+            nw = int(h*tr); left = (w-nw)//2; img = img.crop((left, 0, left+nw, h))
         else:
-            nh = int(w/tr)
-            top = (h-nh)//2
-            img = img.crop((0, top, w, top+nh))
+            nh = int(w/tr); top = (h-nh)//2; img = img.crop((0, top, w, top+nh))
         img = img.resize((1080, 1920), Image.LANCZOS)
         
-        # V9: SINGULARITY GRADE
-        img = apply_singularity_grade(img)
+        img = apply_mimicry_grade(img)
         img.save("bg.jpg")
         
-        # V9: DRUNK CAMERAMAN (Non-linear Wandering)
+        # Drunk Camera
         clip_bg = ImageClip("bg.jpg").set_duration(duration)
         w, h = clip_bg.size
-        
-        # Random wandering parameters
         drift_x = random.randint(-30, 30)
         drift_speed = random.uniform(0.8, 1.2)
         
         def drunk_scroll(gf, t):
             frame = Image.fromarray(gf(t))
-            
-            # Non-linear Zoom (Breathing)
             zoom = 1.05 + (0.08 * math.sin(t * 0.4)) + (0.02 * t)
-            
             new_w, new_h = int(w*zoom), int(h*zoom)
             frame = frame.resize((new_w, new_h), Image.LANCZOS)
             cx, cy = new_w//2, new_h//2
-            
-            # Drifting Pan
             pan_x = int(drift_x * math.sin(t * drift_speed))
-            
-            left = cx - 540 + pan_x
-            top = cy - 960
-            
+            left = cx - 540 + pan_x; top = cy - 960
             if left < 0: left = 0
             if top < 0: top = 0
-            if left + 1080 > new_w: left = new_w - 1080
-            if top + 1920 > new_h: top = new_h - 1920
-            
             return np.array(frame.crop((left, top, left+1080, top+1920)))
             
         clip_bg = clip_bg.fl(drunk_scroll)
         
-        # V9: LIGHT LEAKS OVERLAY
         overlay = render_skin(img, data, art['source']['name'])
         leak = generate_light_leak(1080, 1920)
         overlay.paste(leak, (0,0), leak)
         overlay.save("ov.png")
         clip_ui = ImageClip("ov.png").set_duration(duration)
         
-        # V9: AUDIO VIBRATO & NOISE
+        # Audio Phase & Vibrato
         track = random.choice(["news1", "news2", "drum"])
         main = AudioFileClip(f"ghost_assets/{track}.mp3")
         noise = AudioFileClip("ghost_assets/noise.mp3").volumex(0.06)
-        
         if main.duration > duration:
             start = random.uniform(0, main.duration - duration)
             main = main.subclip(start, start+duration)
-        
-        # Pitch Wobble (Vibrato)
-        # MoviePy doesn't have native vibrato, so we use a random speed offset per video
         main = main.fx(vfx.speedx, random.uniform(0.97, 1.03))
         
         final_audio = CompositeAudioClip([main, noise.set_duration(duration)])
-        
         final = CompositeVideoClip([clip_bg, clip_ui]).set_audio(final_audio).set_duration(duration)
         
-        # V9: METADATA POISONING (Fake Encoder)
-        # We can't easily write metadata with MoviePy, but we randomize bitrate heavily
-        br = str(random.randint(3800, 5200)) + "k"
-        
-        # Random FPS
-        fps = random.choice([23.976, 24, 25, 29.97, 30])
-        
+        # V10: iPhone VFR Simulation
+        fps = random.choice([23.976, 24.00, 29.97, 30.00])
+        br = str(random.randint(4000, 6000)) + "k"
         final.write_videofile("out.mp4", fps=fps, codec='libx264', audio_codec='aac', bitrate=br, preset="ultrafast", logger=None)
         return "out.mp4"
     except Exception as e:
@@ -375,7 +313,7 @@ def post_yt_sleeper(path, title, desc):
 
 if __name__ == "__main__":
     ensure_assets()
-    log("SYS", "Singularity V9 Online")
+    log("SYS", "Mimicry V10 Online")
     news = fetch_news()
     if news:
         target = news[0]
@@ -386,7 +324,7 @@ if __name__ == "__main__":
             ig = post_ig(video, cap)
             fb = post_fb_fixed(video, cap)
             yt = post_yt_sleeper(video, data['headline'], cap)
-            msg = f"☣️ Posted: {data['headline']}\nIG:{ig} FB:{fb} YT:{yt}"
+            msg = f"🧬 Posted: {data['headline']}\nIG:{ig} FB:{fb} YT:{yt}"
             log("DONE", msg)
             if TELEGRAM_BOT_TOKEN: requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_ADMIN_ID, "text": msg})
             with open("ghost_history.txt", "a") as f: f.write(f"{target['title']}|{target['url']}|{datetime.now()}\n")
