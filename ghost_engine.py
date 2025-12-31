@@ -45,35 +45,16 @@ def ensure_ghost_assets():
     if not os.path.exists("Anton.ttf"): 
         os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
 
-# --- INTELLIGENCE (DYNAMIC MODEL FIX) ---
+# --- INTELLIGENCE ---
 def get_groq_model(client):
-    """
-    Asks Groq API for list of active models and picks the best one.
-    Prevents 'model decommissioned' errors.
-    """
     try:
-        # 1. Fetch live models from API
         models = client.models.list()
-        active_ids = [m.id for m in models.data]
-        
-        # 2. Priority List (Newest first)
-        priority = [
-            "llama-3.3-70b-versatile", 
-            "llama-3.1-70b-versatile", 
-            "llama3-70b-8192", 
-            "mixtral-8x7b-32768"
-        ]
-        
-        # 3. Match Priority to Active
+        active = [m.id for m in models.data]
+        priority = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "mixtral-8x7b-32768"]
         for p in priority:
-            if p in active_ids:
-                return p
-        
-        # 4. Fallback: Return first valid one if none match
-        return active_ids[0]
-    except:
-        # If API fails, default to current stable
-        return "llama-3.3-70b-versatile"
+            if p in active: return p
+        return active[0]
+    except: return "llama-3.3-70b-versatile"
 
 def is_toxic_content(title):
     t = title.lower()
@@ -106,8 +87,7 @@ def fetch_fresh_news():
 
 def analyze_story(art):
     client = Groq(api_key=GROQ_API_KEY)
-    active_model = get_groq_model(client) # DYNAMICALLY FETCHED
-    
+    model = get_groq_model(client)
     try:
         with DDGS() as ddgs: 
             res = ddgs.text(art['title'], max_results=1)
@@ -122,20 +102,21 @@ def analyze_story(art):
         f"- 'body' (One clear, objective sentence. Max 15 words.)"
     )
     try:
-        raw = client.chat.completions.create(messages=[{"role":"user","content":sys_msg}], model=active_model, response_format={"type": "json_object"}).choices[0].message.content
+        raw = client.chat.completions.create(messages=[{"role":"user","content":sys_msg}], model=model, response_format={"type": "json_object"}).choices[0].message.content
         data = json.loads(raw)
     except: data = {"mood": "CALM", "headline": "BREAKING NEWS", "body": art['title']}
 
-    # FIXED: Uses active_model instead of hardcoded string
-    cap = client.chat.completions.create(messages=[{"role":"user","content":f"Caption for: {art['title']}. Start with 'Source: {art['source']['name']}'. End with 10 relevant hashtags."}], model=active_model).choices[0].message.content.strip()
+    cap = client.chat.completions.create(messages=[{"role":"user","content":f"Caption for: {art['title']}. Start with 'Source: {art['source']['name']}'. End with 10 relevant hashtags."}], model=model).choices[0].message.content.strip()
     return data, cap
 
-# --- RENDERER ---
+# --- RENDERER (FIXED CROP) ---
 def apply_visual_noise(img):
     img = img.convert("RGB")
     enhancer = ImageEnhance.Color(img)
-    img = enhancer.enhance(random.uniform(0.85, 1.15))
-    overlay = Image.new("RGB", img.size, (random.randint(0,20), random.randint(0,20), random.randint(0,20)))
+    img = enhancer.enhance(random.uniform(0.9, 1.1))
+    # Lighter, subtle tint instead of dark noise
+    tint = (random.randint(230,255), random.randint(230,255), random.randint(230,255))
+    overlay = Image.new("RGB", img.size, tint)
     img = Image.blend(img, overlay, 0.05)
     return img
 
@@ -164,8 +145,27 @@ def render_ghost_video(art, data):
     try:
         r = requests.get(art['urlToImage'], timeout=15)
         with open("ghost_raw.jpg", "wb") as f: f.write(r.content)
-        img = apply_visual_noise(Image.open("ghost_raw.jpg"))
+        
+        # --- FIX: SMART CROP LOGIC ---
+        img = Image.open("ghost_raw.jpg").convert("RGB")
+        w, h = img.size
+        target_ratio = 1080 / 1920
+        src_ratio = w / h
+        
+        # Resize to fill vertical screen
+        if src_ratio > target_ratio:
+            new_width = int(h * target_ratio)
+            left = (w - new_width) // 2
+            img = img.crop((left, 0, left + new_width, h))
+        else:
+            new_height = int(w / target_ratio)
+            top = (h - new_height) // 2
+            img = img.crop((0, top, w, top + new_height))
+            
+        img = img.resize((1080, 1920), Image.LANCZOS)
+        img = apply_visual_noise(img)
         img.save("ghost_proc.jpg")
+        # -----------------------------
         
         bg_clip = create_cinematic_pan("ghost_proc.jpg", duration)
         
