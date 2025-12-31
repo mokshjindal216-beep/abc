@@ -1,6 +1,8 @@
 import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, difflib, re, random, math, io
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageEnhance, ImageOps, ImageFilter, ImageChops
-from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip, AudioFileClip, vfx, CompositeAudioClip, AudioArrayClip
+from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip, AudioFileClip, vfx, CompositeAudioClip
+# --- FIX: Import AudioArrayClip directly from source ---
+from moviepy.audio.AudioClip import AudioArrayClip
 from groq import Groq
 from datetime import datetime, timedelta
 from newspaper import Article
@@ -367,7 +369,7 @@ def send_telegram(msg):
 
 if __name__ == "__main__":
     ensure_assets()
-    log("SYS", "Shadow Syndicate V19 Online")
+    log("SYS", "Shadow Syndicate V20 Online")
     
     news_list = fetch_news()
     if not news_list:
