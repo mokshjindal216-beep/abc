@@ -30,14 +30,17 @@ cloudinary.config(cloud_name=CLOUDINARY_CLOUD_NAME, api_key=CLOUDINARY_API_KEY, 
 
 # --- 1. ASSETS & LOGGING ---
 def log(step, msg): 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🛡️ {step.upper()}: {msg}")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 👻 {step.upper()}: {msg}")
 
 def ensure_assets():
     os.makedirs('ghost_assets', exist_ok=True)
+    # V14: 5 Fonts for maximum layout entropy
     fonts = {
         "Anton": "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf",
         "Oswald": "https://github.com/google/fonts/raw/main/ofl/oswald/static/Oswald-Bold.ttf",
-        "Roboto": "https://github.com/google/fonts/raw/main/apache/robotocondensed/static/RobotoCondensed-Bold.ttf"
+        "Roboto": "https://github.com/google/fonts/raw/main/apache/robotocondensed/static/RobotoCondensed-Bold.ttf",
+        "Bebas": "https://github.com/google/fonts/raw/main/ofl/bebasneue/BebasNeue-Regular.ttf",
+        "Lobster": "https://github.com/google/fonts/raw/main/ofl/lobster/Lobster-Regular.ttf"
     }
     for n, u in fonts.items():
         if not os.path.exists(f"ghost_assets/{n}.ttf"): os.system(f"wget -q -O ghost_assets/{n}.ttf {u}")
@@ -50,11 +53,14 @@ def ensure_assets():
     for n, u in tracks.items():
         if not os.path.exists(f"ghost_assets/{n}.mp3"): os.system(f"wget -q -O ghost_assets/{n}.mp3 {u}")
 
-def get_random_agent():
-    return random.choice([
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Safari/605.1.15"
-    ])
+def get_stealth_headers():
+    # V14: Real Browser Headers to bypass image download blocks
+    agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    ]
+    return {"User-Agent": random.choice(agents), "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"}
 
 # --- 2. INTELLIGENCE ---
 def get_groq_model(client):
@@ -77,20 +83,18 @@ def is_garbage(title):
     return False
 
 def fetch_news():
-    log("NEWS", "Hunting for stories...")
+    log("NEWS", "Stealth scan active...")
     cands = []
     sources = ["reuters", "associated-press", "bloomberg", "bbc-news", "cnn", "business-insider"]
     random.shuffle(sources)
     try:
-        headers = {"User-Agent": get_random_agent()}
         url = f"https://newsapi.org/v2/top-headlines?sources={','.join(sources[:5])}&apiKey={NEWS_API_KEY}"
-        r = requests.get(url, headers=headers, timeout=20).json()
+        r = requests.get(url, headers=get_stealth_headers(), timeout=20).json()
         if r.get('status') == 'ok': 
             for a in r['articles']:
                 if a.get('urlToImage') and not is_garbage(a['title']):
                     cands.append(a)
     except Exception as e: log("ERR", str(e))
-    # Return ALL candidates so we can loop through them if one fails
     return cands
 
 def analyze_story(art):
@@ -111,41 +115,108 @@ def analyze_story(art):
     cap = client.chat.completions.create(messages=[{"role":"user","content":f"Caption for: {art['title']}. End with 10 hashtags."}], model=model).choices[0].message.content.strip()
     return data, cap
 
-# --- 3. JUGGERNAUT RENDERER ---
-def apply_mimicry_grade(img):
-    # Chromatic Aberration
+# --- 3. PHANTOM RENDERER (V14) ---
+def apply_phantom_grade(img):
+    # 1. MIRRORING (Breaks pHash Detection)
+    if random.random() > 0.5:
+        img = ImageOps.mirror(img)
+    
+    # 2. Chromatic Split
     r, g, b = img.split()
     r = ImageChops.offset(r, random.randint(-4, 4), random.randint(-2, 2))
     b = ImageChops.offset(b, random.randint(-4, 4), random.randint(-2, 2))
     img = Image.merge("RGB", (r, g, b))
     
-    # Light Leaks
+    # 3. Light Leaks
     leak = Image.new('RGBA', img.size, (0,0,0,0))
     draw = ImageDraw.Draw(leak)
     for _ in range(random.randint(1, 2)):
         x, y = random.randint(0, img.size[0]), random.randint(0, img.size[1])
-        r_rad = random.randint(200, 500)
-        draw.ellipse((x-r_rad, y-r_rad, x+r_rad, y+r_rad), fill=(255, 200, 150, 30))
-    leak = leak.filter(ImageFilter.GaussianBlur(50))
+        r_rad = random.randint(300, 600)
+        draw.ellipse((x-r_rad, y-r_rad, x+r_rad, y+r_rad), fill=(255, 200, 150, 25))
+    leak = leak.filter(ImageFilter.GaussianBlur(60))
     img.paste(leak, (0,0), leak)
     
     return img
+
+def fit_text_dynamic(draw, text, box_w, font_name, max_s):
+    size = max_s
+    try: font = ImageFont.truetype(f"ghost_assets/{font_name}.ttf", size)
+    except: font = ImageFont.load_default()
+    while size > 30:
+        lines = textwrap.wrap(text, width=int(box_w / (size * 0.5)))
+        h = sum([draw.textbbox((0,0), l, font=font)[3] for l in lines]) * 1.1
+        if h < 1000: return font, lines
+        size -= 5
+        font = ImageFont.truetype(f"ghost_assets/{font_name}.ttf", size)
+    return font, textwrap.wrap(text, width=20)
+
+def render_skin(data, source_name):
+    # 5 LAYOUTS (Restored for maximum variety)
+    layout = random.choice(["classic", "split", "boxed", "minimal", "poster"])
+    font_name = random.choice(["Anton", "Oswald", "Roboto", "Bebas", "Lobster"])
+    color = random.choice(["#E63946", "#FFD700", "#00F0FF", "#FFFFFF", "#FF5733"])
+    jx, jy = random.randint(-8, 8), random.randint(-8, 8)
+    
+    overlay = Image.new('RGBA', (1080, 1920), (0,0,0,0))
+    draw = ImageDraw.Draw(overlay)
+    
+    if layout == "classic":
+        grad = Image.new('L', (1080, 1000), 0)
+        for y in range(1000): ImageDraw.Draw(grad).line([(0,y),(1080,y)], fill=int((y/1000)*255))
+        overlay.paste(Image.new('RGBA', (1080,1000), (0,0,0,230)), (0, 920), mask=grad)
+        f, l = fit_text_dynamic(draw, data['headline'], 1000, font_name, 100)
+        y = 1100 + jy
+        for line in l: draw.text((50+jx, y), line, font=f, fill="white"); y += f.size + 10
+        
+    elif layout == "split":
+        draw.rectangle([(0, 1200+jy), (1080, 1920)], fill="black")
+        draw.rectangle([(50+jx, 1150+jy), (300+jx, 1220+jy)], fill=color) 
+        draw.text((60+jx, 1160+jy), source_name, font=ImageFont.truetype(f"ghost_assets/{font_name}.ttf", 40), fill="black")
+        f, l = fit_text_dynamic(draw, data['headline'], 900, font_name, 90)
+        y = 1300 + jy
+        for line in l: draw.text((50+jx, y), line, font=f, fill="white"); y += f.size + 10
+
+    elif layout == "boxed":
+        draw.rectangle([(100+jx, 800+jy), (980+jx, 1400+jy)], fill=(0,0,0,200), outline=color, width=5)
+        f, l = fit_text_dynamic(draw, data['headline'], 800, font_name, 80)
+        y = 900 + jy
+        for line in l: draw.text((150+jx, y), line, font=f, fill="white"); y += f.size + 10
+        
+    elif layout == "minimal":
+        f, l = fit_text_dynamic(draw, data['headline'], 1000, font_name, 110)
+        y = 250 + jy
+        for line in l: 
+            draw.text((55+jx, y+5), line, font=f, fill="black")
+            draw.text((50+jx, y), line, font=f, fill="white")
+            y += f.size + 10
+            
+    elif layout == "poster":
+        f, l = fit_text_dynamic(draw, data['headline'], 1000, font_name, 140)
+        y = 500 + jy
+        for line in l: 
+            draw.text((50+jx, y), line, font=f, fill=(255,255,255, 220), stroke_width=3, stroke_fill="black")
+            y += f.size + 15
+
+    if layout != "boxed":
+        fb, lb = fit_text_dynamic(draw, data['body'], 900, "Roboto", 45)
+        yb = 1600 + jy
+        for line in lb: draw.text((50+jx, yb), line, font=fb, fill="#E0E0E0"); yb += 50
+        
+    return overlay
 
 def render_video(art, data):
     ensure_assets()
     duration = random.uniform(8.5, 12.0)
     
     try:
-        # STRICT Image Loading
-        r = requests.get(art['urlToImage'], headers={"User-Agent": get_random_agent()}, timeout=10)
-        if r.status_code != 200: raise Exception("Image download bad status")
+        # V14: Stealth Download
+        r = requests.get(art['urlToImage'], headers=get_stealth_headers(), timeout=10)
+        if r.status_code != 200: raise Exception(f"Status {r.status_code}")
         
-        try:
-            img = Image.open(io.BytesIO(r.content)).convert("RGB")
-        except:
-            raise Exception("Image file corrupted") # Throw error so loop continues
+        try: img = Image.open(io.BytesIO(r.content)).convert("RGB")
+        except: raise Exception("File corrupted")
 
-        # Crop & Resize
         w, h = img.size
         tr = 1080/1920
         if w/h > tr:
@@ -154,11 +225,10 @@ def render_video(art, data):
             nh = int(w/tr); top = (h-nh)//2; img = img.crop((0, top, w, top+nh))
         img = img.resize((1080, 1920), Image.LANCZOS)
         
-        # Apply Anti-Detection FX
-        img = apply_mimicry_grade(img)
+        # APPLY PHANTOM GRADE (Mirroring + FX)
+        img = apply_phantom_grade(img)
         img.save("bg.jpg")
         
-        # Drunk Camera Motion
         clip_bg = ImageClip("bg.jpg").set_duration(duration)
         w, h = clip_bg.size
         drift_x = random.randint(-20, 20)
@@ -177,41 +247,33 @@ def render_video(art, data):
             
         clip_bg = clip_bg.fl(drunk_scroll)
         
-        # Overlay
-        overlay = Image.new('RGBA', (1080, 1920), (0,0,0,0))
-        draw = ImageDraw.Draw(overlay)
-        grad = Image.new('L', (1080, 1000), 0)
-        for y in range(1000): ImageDraw.Draw(grad).line([(0,y),(1080,y)], fill=int((y/1000)*255))
-        overlay.paste(Image.new('RGBA', (1080,1000), (0,0,0,220)), (0, 920), mask=grad)
-        
-        font = ImageFont.truetype("ghost_assets/Anton.ttf", 90)
-        lines = textwrap.wrap(data['headline'], width=14)
-        y = 1100
-        for l in lines:
-            draw.text((50 + random.randint(-2,2), y), l, font=font, fill="white")
-            y += 100
-        
+        overlay = render_skin(data, art['source']['name'])
         overlay.save("ov.png")
         clip_ui = ImageClip("ov.png").set_duration(duration)
         
-        # Audio
         track_name = random.choice(["news1", "news2"])
         if os.path.exists(f"ghost_assets/{track_name}.mp3"):
             audio = AudioFileClip(f"ghost_assets/{track_name}.mp3")
-            if audio.duration > duration: audio = audio.subclip(0, duration)
-            # Pitch Shift
+            # V14: Random Offset (Silence Trim)
+            if audio.duration > duration + 0.5:
+                offset = random.uniform(0.1, 0.5)
+                audio = audio.subclip(offset, offset + duration)
+            else:
+                audio = audio.set_duration(duration)
+            
             audio = audio.fx(vfx.speedx, random.uniform(0.98, 1.02))
             final = CompositeVideoClip([clip_bg, clip_ui]).set_audio(audio).set_duration(duration)
         else:
             final = CompositeVideoClip([clip_bg, clip_ui]).set_duration(duration)
 
-        # Render with Random Mobile FPS
         fps = random.choice([29.97, 30.00, 24.00])
         br = str(random.randint(4000, 5500)) + "k"
-        final.write_videofile("out.mp4", fps=fps, codec='libx264', audio_codec='aac', bitrate=br, preset="ultrafast", logger=None)
+        
+        # V14: METADATA SCRUB VIA FFMPEG PARAMS
+        final.write_videofile("out.mp4", fps=fps, codec='libx264', audio_codec='aac', bitrate=br, preset="ultrafast", logger=None,
+            ffmpeg_params=["-metadata", "title=", "-metadata", "artist="]) # Scrub metadata
         return "out.mp4"
     except Exception as e:
-        # Pass error up so the loop can handle it
         raise e 
 
 # --- 4. DISTRIBUTION ---
@@ -234,13 +296,14 @@ def post_ig(path, cap):
 def post_fb(path, cap):
     if not FB_ACCESS_TOKEN: return False
     try:
+        log("FB", "Uploading...")
         init = requests.post(f"https://graph.facebook.com/v18.0/{FB_PAGE_ID}/video_reels", data={"upload_phase":"start", "access_token": FB_ACCESS_TOKEN}).json()
         vid_id = init.get('video_id')
         up_url = init.get('upload_url')
         if not vid_id: return False
         with open(path, 'rb') as f:
             requests.post(up_url, headers={"Authorization": f"OAuth {FB_ACCESS_TOKEN}", "file_size": str(os.path.getsize(path))}, data=f)
-        time.sleep(15) 
+        time.sleep(30) 
         fin = requests.post(f"https://graph.facebook.com/v18.0/{FB_PAGE_ID}/video_reels", data={"upload_phase":"finish", "video_id": vid_id, "video_state":"PUBLISHED", "description": cap, "access_token": FB_ACCESS_TOKEN}).json()
         return fin.get('success', False)
     except: return False
@@ -260,55 +323,31 @@ def send_telegram(msg):
         try: requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_ADMIN_ID, "text": msg})
         except: pass
 
-# --- MAIN EXECUTION (THE ROBUST LOOP) ---
 if __name__ == "__main__":
     ensure_assets()
-    log("SYS", "Juggernaut V12 Online")
-    
-    # Fetch ALL potential news stories
+    log("SYS", "Phantom V14 Online")
     news_list = fetch_news()
-    
     if not news_list:
-        log("SYS", "No news found. Sleeping.")
+        log("SYS", "No news found.")
         exit(0)
     
     success = False
-    
-    # ROBUST LOOP: Try every story until one works
     for i, target in enumerate(news_list):
-        log("TRY", f"Attempting Story {i+1}/{len(news_list)}: {target['title'][:30]}...")
-        
+        log("TRY", f"Attempt {i+1}: {target['title'][:30]}...")
         try:
-            # 1. Intelligence
             data, cap = analyze_story(target)
-            
-            # 2. Render (May fail if image is bad)
             video_path = render_video(target, data)
-            
             if video_path and os.path.exists(video_path):
-                # 3. Distribution
                 ig = post_ig(video_path, cap)
                 fb = post_fb(video_path, cap)
                 yt = post_yt(video_path, data['headline'], cap)
-                
-                # 4. Success Reporting
-                status_msg = f"🚀 Posted: {data['headline']}\nIG:{ig} FB:{fb} YT:{yt}"
+                status_msg = f"👻 Posted: {data['headline']}\nIG:{ig} FB:{fb} YT:{yt}"
                 log("SUCCESS", status_msg)
                 send_telegram(status_msg)
-                
-                # 5. Save History & Break Loop
-                with open("ghost_history.txt", "a") as f: 
-                    f.write(f"{target['title']}|{target['url']}|{datetime.now()}\n")
-                
+                with open("ghost_history.txt", "a") as f: f.write(f"{target['title']}|{target['url']}|{datetime.now()}\n")
                 success = True
-                break # STOP LOOP, WE WON
-            else:
-                log("WARN", "Render failed silently (no file). Trying next...")
-                
+                break
+            else: log("WARN", "Render failed. Next...")
         except Exception as e:
-            log("SKIP", f"Story failed: {str(e)}. Moving to next...")
+            log("SKIP", f"Failed: {str(e)}. Next...")
             continue
-            
-    if not success:
-        log("FAIL", "All stories failed. System shutting down.")
-        send_telegram("⚠️ All render attempts failed today.")
