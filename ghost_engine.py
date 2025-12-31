@@ -1,8 +1,8 @@
-import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, difflib, re, random, math, io
+import os, time, requests, textwrap, json, numpy as np, cloudinary, cloudinary.uploader, difflib, re, random, math, io, string
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageEnhance, ImageOps, ImageFilter, ImageChops
 from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip, AudioFileClip, vfx, CompositeAudioClip
 from groq import Groq
-from datetime import datetime
+from datetime import datetime, timedelta
 from newspaper import Article
 from duckduckgo_search import DDGS
 from google.oauth2.credentials import Credentials
@@ -28,18 +28,24 @@ TELEGRAM_ADMIN_ID = os.getenv("TELEGRAM_ADMIN_ID")
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 cloudinary.config(cloud_name=CLOUDINARY_CLOUD_NAME, api_key=CLOUDINARY_API_KEY, api_secret=CLOUDINARY_API_SECRET)
 
-# --- 1. ASSETS ---
+# --- 1. ASSETS & THE "THIEF" UTILS ---
 def log(step, msg): 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚔️ {step.upper()}: {msg}")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🏴‍☠️ {step.upper()}: {msg}")
 
 def ensure_assets():
     os.makedirs('ghost_assets', exist_ok=True)
-    # Only the PRO fonts now
+    # EXPANDED FONT ARMORY (10 Fonts)
     fonts = {
         "Anton": "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf",
         "Oswald": "https://github.com/google/fonts/raw/main/ofl/oswald/static/Oswald-Bold.ttf",
         "Roboto": "https://github.com/google/fonts/raw/main/apache/robotocondensed/static/RobotoCondensed-Bold.ttf",
-        "Bebas": "https://github.com/google/fonts/raw/main/ofl/bebasneue/BebasNeue-Regular.ttf"
+        "Bebas": "https://github.com/google/fonts/raw/main/ofl/bebasneue/BebasNeue-Regular.ttf",
+        "Lobster": "https://github.com/google/fonts/raw/main/ofl/lobster/Lobster-Regular.ttf",
+        "Courier": "https://github.com/google/fonts/raw/main/apache/courierprime/CourierPrime-Bold.ttf",
+        "Pacifico": "https://github.com/google/fonts/raw/main/ofl/pacifico/Pacifico-Regular.ttf",
+        "Bangers": "https://github.com/google/fonts/raw/main/ofl/bangers/Bangers-Regular.ttf",
+        "Abril": "https://github.com/google/fonts/raw/main/ofl/abrilfatface/AbrilFatface-Regular.ttf",
+        "Righteous": "https://github.com/google/fonts/raw/main/ofl/righteous/Righteous-Regular.ttf"
     }
     for n, u in fonts.items():
         if not os.path.exists(f"ghost_assets/{n}.ttf"): os.system(f"wget -q -O ghost_assets/{n}.ttf {u}")
@@ -53,13 +59,16 @@ def ensure_assets():
         if not os.path.exists(f"ghost_assets/{n}.mp3"): os.system(f"wget -q -O ghost_assets/{n}.mp3 {u}")
 
 def get_random_agent():
+    # Spoofs everything from iPhones to Linux boxes
     return random.choice([
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0"
     ])
 
 def get_thief_filename():
-    prefix = random.choice(["IMG_", "RPReplay_", "WhatsApp_Video_", "Clip_"])
+    # Looks like a raw camera file
+    prefix = random.choice(["IMG_", "DJI_", "GX01", "RPReplay_", "Clip_", "VID_"])
     num = random.randint(1000, 9999)
     return f"{prefix}{num}.mp4"
 
@@ -84,10 +93,9 @@ def is_garbage(title):
     return False
 
 def fetch_news():
-    log("NEWS", "Scanning feeds...")
+    log("NEWS", "Scanning global spectrum...")
     cands = []
-    # High quality visual sources only
-    sources = ["reuters", "associated-press", "bloomberg", "bbc-news", "cnn", "the-verge"]
+    sources = ["reuters", "associated-press", "bloomberg", "bbc-news", "cnn", "the-verge", "wired", "time"]
     random.shuffle(sources)
     try:
         url = f"https://newsapi.org/v2/top-headlines?sources={','.join(sources[:5])}&apiKey={NEWS_API_KEY}"
@@ -108,27 +116,66 @@ def analyze_story(art):
             ctx = res[0]['body'] if res else art['description']
     except: ctx = art['description']
 
-    sys_msg = f"Story: {art['title']}\nContext: {ctx}\nOutput JSON: {{'headline': '4-7 words UPPERCASE', 'body': '1 sentence'}}"
+    # Instructing AI to be punchy and viral
+    sys_msg = f"Story: {art['title']}\nContext: {ctx}\nOutput JSON: {{'headline': '4-7 words UPPERCASE IMPACTFUL', 'body': '1 short sentence'}}"
     try:
         raw = client.chat.completions.create(messages=[{"role":"user","content":sys_msg}], model=model, response_format={"type": "json_object"}).choices[0].message.content
         data = json.loads(raw)
     except: data = {"headline": art['title'][:50], "body": art['description'][:100]}
     
-    cap = client.chat.completions.create(messages=[{"role":"user","content":f"Caption for: {art['title']}. End with 10 hashtags."}], model=model).choices[0].message.content.strip()
+    cap = client.chat.completions.create(messages=[{"role":"user","content":f"Viral Caption for: {art['title']}. End with 15 relevant hashtags."}], model=model).choices[0].message.content.strip()
     return data, cap
 
-# --- 3. WARLORD RENDERER ---
-def apply_grade(img):
-    # The "Pro" Look: High Contrast + Saturation
-    enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(1.15)
-    enhancer = ImageEnhance.Color(img)
-    img = enhancer.enhance(1.1)
+# --- 3. THE SHADOW RENDERER (PROCEDURAL GENERATION) ---
+def generate_procedural_dust(w, h):
+    # Generates a UNIQUE dust/scratch layer every time
+    # This ensures no two videos have the same pixel mask
+    dust = Image.new('RGBA', (w, h), (0,0,0,0))
+    draw = ImageDraw.Draw(dust)
     
-    # STEALTH: Chromatic Offset (Invisible to human, visible to bot)
+    # Random scratches
+    for _ in range(random.randint(5, 15)):
+        x1 = random.randint(0, w)
+        y1 = random.randint(0, h)
+        x2 = x1 + random.randint(-50, 50)
+        y2 = y1 + random.randint(-50, 50)
+        width = random.randint(1, 3)
+        fill = (255, 255, 255, random.randint(20, 50))
+        draw.line([(x1,y1), (x2,y2)], fill=fill, width=width)
+        
+    # Random specks
+    for _ in range(random.randint(20, 50)):
+        x = random.randint(0, w)
+        y = random.randint(0, h)
+        r = random.randint(1, 3)
+        fill = (255, 255, 255, random.randint(30, 80))
+        draw.ellipse((x-r, y-r, x+r, y+r), fill=fill)
+        
+    return dust
+
+def apply_shadow_grade(img):
+    # Pro Contrast
+    enhancer = ImageEnhance.Contrast(img)
+    img = enhancer.enhance(random.uniform(1.1, 1.2))
+    
+    # Color Shift (Subtle)
     r, g, b = img.split()
-    r = ImageChops.offset(r, random.randint(-2, 2), 0) # Micro shift
+    r = ImageChops.offset(r, random.randint(-3, 3), 0)
+    b = ImageChops.offset(b, random.randint(-3, 3), 0)
     img = Image.merge("RGB", (r, g, b))
+    
+    # Vignette
+    w, h = img.size
+    # Create gradient mask
+    radius = min(w, h) * 1.5
+    gradient = Image.new('L', (w, h), 0)
+    draw = ImageDraw.Draw(gradient)
+    # Draw radial gradient simulation
+    draw.ellipse((w/2 - radius/2, h/2 - radius/2, w/2 + radius/2, h/2 + radius/2), fill=255)
+    gradient = gradient.filter(ImageFilter.GaussianBlur(100))
+    # Apply vignette
+    black = Image.new('RGB', (w, h), 0)
+    img = Image.composite(img, black, gradient)
     
     return img
 
@@ -145,68 +192,77 @@ def fit_text_dynamic(draw, text, box_w, font_name, max_s):
     return font, textwrap.wrap(text, width=20)
 
 def render_skin(data, source_name):
-    # We bias heavily towards "Classic" because it looks best
-    skins = ["classic", "classic", "classic", "split", "poster", "neon"]
+    # 15 LAYOUT ENGINES (Classic, Poster, Cyber, Paper, etc.)
+    skins = ["classic", "classic", "split", "boxed", "poster", "neon", "brutalist", "paper", "typewriter", "cinematic", "news", "bold", "clean", "glitch", "minimal"]
     layout = random.choice(skins)
     
-    # Fonts locked to professional ones
-    font_name = "Anton" if layout in ["classic", "poster"] else "Oswald"
+    # Procedural Color Palette Generator
+    def random_color():
+        return "#%06x" % random.randint(0, 0xFFFFFF)
     
-    colors = ["#E63946", "#FFD700", "#00F0FF", "#FFFFFF", "#FF5733"]
-    color = random.choice(colors)
-    jx, jy = random.randint(-5, 5), random.randint(-5, 5) # Subtle jitter
+    # Safe professional colors + 20% chance of wild color
+    pro_colors = ["#E63946", "#FFD700", "#00F0FF", "#FFFFFF", "#FF5733", "#C70039", "#2A9D8F"]
+    color = random.choice(pro_colors) if random.random() > 0.2 else random_color()
+    
+    jx, jy = random.randint(-6, 6), random.randint(-6, 6) # Jitter
     
     overlay = Image.new('RGBA', (1080, 1920), (0,0,0,0))
     draw = ImageDraw.Draw(overlay)
     
-    log("DESIGN", f"Skin: {layout.upper()}")
+    log("DESIGN", f"Skin: {layout.upper()} | Palette: {color}")
 
+    # --- LAYOUT LOGIC ---
     if layout == "classic":
-        # The "BBC/NatGeo" Look
         grad = Image.new('L', (1080, 1000), 0)
         for y in range(1000): ImageDraw.Draw(grad).line([(0,y),(1080,y)], fill=int((y/1000)*255))
-        overlay.paste(Image.new('RGBA', (1080,1000), (0,0,0,240)), (0, 920), mask=grad)
+        overlay.paste(Image.new('RGBA', (1080,1000), (0,0,0,230)), (0, 920), mask=grad)
         
         # Source Pill
         font_s = ImageFont.truetype("ghost_assets/Anton.ttf", 30)
-        src_txt = f" {source_name.upper()} "
-        draw.rounded_rectangle([(50+jx, 1050+jy), (50+jx+draw.textlength(src_txt, font_s)+20, 1100+jy)], radius=10, fill="#E63946")
-        draw.text((60+jx, 1058+jy), src_txt, font=font_s, fill="white")
+        src = f" {source_name.upper()} "
+        draw.rounded_rectangle([(50+jx, 1050+jy), (50+jx+draw.textlength(src, font_s)+20, 1100+jy)], radius=10, fill=color)
+        draw.text((60+jx, 1058+jy), src, font=font_s, fill="black")
         
-        # Headline
-        f, l = fit_text_dynamic(draw, data['headline'], 1000, font_name, 110)
+        f, l = fit_text_dynamic(draw, data['headline'], 1000, "Anton", 110)
         y = 1150 + jy
         for line in l: draw.text((50+jx, y), line, font=f, fill="white"); y += f.size + 10
 
-    elif layout == "split":
-        # Top/Bottom Split
+    elif layout == "poster":
+        f, l = fit_text_dynamic(draw, data['headline'], 1000, "Anton", 140)
+        y = 400 + jy
+        for line in l: 
+            draw.text((50+jx, y), line, font=f, fill=(255,255,255, 240), stroke_width=4, stroke_fill="black")
+            y += f.size + 15
+            
+    elif layout == "paper":
+        draw.rectangle([(50+jx, 1100+jy), (1030+jx, 1600+jy)], fill="#F4F1EA") # Cream paper
+        f, l = fit_text_dynamic(draw, data['headline'], 900, "Courier", 80)
+        y = 1150 + jy
+        for line in l: draw.text((80+jx, y), line, font=f, fill="#1A1A1A"); y += f.size + 10
+        
+    elif layout == "news":
+        draw.rectangle([(0, 1300+jy), (1080, 1920)], fill="#B71C1C") # Red breaking news bar
+        draw.text((50+jx, 1320+jy), "BREAKING NEWS", font=ImageFont.truetype("ghost_assets/Bebas.ttf", 60), fill="white")
+        f, l = fit_text_dynamic(draw, data['headline'], 1000, "Oswald", 90)
+        y = 1400 + jy
+        for line in l: draw.text((50+jx, y), line, font=f, fill="white"); y += f.size + 10
+
+    else: # Fallback / Split / Minimal / Others
         draw.rectangle([(0, 1200+jy), (1080, 1920)], fill="black")
         draw.text((60+jx, 1160+jy), source_name.upper(), font=ImageFont.truetype("ghost_assets/Anton.ttf", 40), fill=color)
         f, l = fit_text_dynamic(draw, data['headline'], 900, "Oswald", 100)
         y = 1250 + jy
         for line in l: draw.text((50+jx, y), line, font=f, fill="white"); y += f.size + 10
 
-    elif layout == "poster":
-        # Big text overlay
-        f, l = fit_text_dynamic(draw, data['headline'], 1000, "Anton", 130)
-        y = 500 + jy
-        for line in l: 
-            draw.text((50+jx, y), line, font=f, fill=(255,255,255, 230), stroke_width=3, stroke_fill="black")
-            y += f.size + 15
-
-    elif layout == "neon":
-        f, l = fit_text_dynamic(draw, data['headline'], 1000, "Bebas", 110)
-        y = 1000 + jy
-        for line in l:
-            draw.text((50+jx, y), line, font=f, fill=color, stroke_width=4, stroke_fill=color)
-            draw.text((50+jx, y), line, font=f, fill="white")
-            y += f.size + 15
-            
+    # Add Procedural Dust Layer
+    dust = generate_procedural_dust(1080, 1920)
+    overlay.paste(dust, (0,0), dust)
+    
     return overlay
 
 def render_video(art, data):
     ensure_assets()
-    duration = random.uniform(9.0, 13.0)
+    duration = random.uniform(9.5, 13.5)
     
     try:
         r = requests.get(art['urlToImage'], headers={"User-Agent": get_random_agent()}, timeout=10)
@@ -222,16 +278,17 @@ def render_video(art, data):
             nh = int(w/tr); top = (h-nh)//2; img = img.crop((0, top, w, top+nh))
         img = img.resize((1080, 1920), Image.LANCZOS)
         
-        img = apply_grade(img)
+        img = apply_shadow_grade(img)
         img.save("bg.jpg")
         
-        # Drunk Camera (Stealth Motion)
+        # Drunk Camera (Smoothed)
         clip_bg = ImageClip("bg.jpg").set_duration(duration)
         w, h = clip_bg.size
         drift_x = random.randint(-15, 15)
         def drunk_scroll(gf, t):
             frame = Image.fromarray(gf(t))
-            zoom = 1.05 + (0.05 * math.sin(t * 0.5))
+            # Sine wave zoom + Linear zoom combination
+            zoom = 1.05 + (0.05 * math.sin(t * 0.5)) + (0.01 * t)
             new_w, new_h = int(w*zoom), int(h*zoom)
             frame = frame.resize((new_w, new_h), Image.LANCZOS)
             cx, cy = new_w//2, new_h//2
@@ -246,20 +303,31 @@ def render_video(art, data):
         overlay.save("ov.png")
         clip_ui = ImageClip("ov.png").set_duration(duration)
         
-        # Audio Processing
+        # Audio Drift
         track_name = random.choice(["news1", "news2"])
         if os.path.exists(f"ghost_assets/{track_name}.mp3"):
             audio = AudioFileClip(f"ghost_assets/{track_name}.mp3")
             if audio.duration > duration: audio = audio.subclip(0, duration)
             audio = audio.fx(vfx.speedx, random.uniform(0.98, 1.02))
+            
+            # Volume Automation (Fade in/out randomly)
+            audio = audio.audio_fadein(random.uniform(0.5, 1.5)).audio_fadeout(random.uniform(0.5, 1.5))
+            
             final = CompositeVideoClip([clip_bg, clip_ui]).set_audio(audio).set_duration(duration)
         else:
             final = CompositeVideoClip([clip_bg, clip_ui]).set_duration(duration)
 
-        fps = random.choice([29.97, 30.00, 24.00])
-        br = str(random.randint(4000, 5500)) + "k"
+        fps = random.choice([29.97, 30.00, 24.00, 25.00])
+        br = str(random.randint(4500, 6000)) + "k"
         out_name = get_thief_filename()
-        final.write_videofile(out_name, fps=fps, codec='libx264', audio_codec='aac', bitrate=br, preset="ultrafast", logger=None, ffmpeg_params=["-metadata", "title=", "-metadata", "artist="])
+        
+        # METADATA SPOOFING (The "iPhone" Lie)
+        final.write_videofile(out_name, fps=fps, codec='libx264', audio_codec='aac', bitrate=br, preset="ultrafast", logger=None, 
+            ffmpeg_params=[
+                "-metadata", "title=", 
+                "-metadata", "artist=",
+                "-metadata", "creation_time=" + (datetime.now() - timedelta(hours=random.randint(1,5))).isoformat()
+            ])
         return out_name
     except Exception as e:
         raise e 
@@ -272,7 +340,7 @@ def post_ig(path, cap):
         r1 = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media", data={"media_type": "REELS", "video_url": url, "caption": cap, "access_token": IG_ACCESS_TOKEN}).json()
         if 'id' in r1:
             cid = r1['id']
-            for _ in range(20):
+            for _ in range(25): # Wait longer
                 time.sleep(5)
                 stat = requests.get(f"https://graph.facebook.com/v18.0/{cid}", params={"fields":"status_code", "access_token": IG_ACCESS_TOKEN}).json()
                 if stat.get('status_code') == 'FINISHED':
@@ -293,9 +361,9 @@ def post_fb(path, cap):
         with open(path, 'rb') as f:
             requests.post(up_url, headers={"Authorization": f"OAuth {FB_ACCESS_TOKEN}", "file_size": str(os.path.getsize(path))}, data=f)
         
-        # SMART POLLING (Checks "Processing Phase")
+        # AGGRESSIVE POLLING
         log("FB", "Polling status...")
-        for _ in range(20): # 200 seconds max
+        for _ in range(40): # 400 Seconds (6+ mins)
             time.sleep(10)
             stat = requests.get(f"https://graph.facebook.com/v18.0/{vid_id}", params={"fields":"status", "access_token": FB_ACCESS_TOKEN}).json()
             
@@ -303,7 +371,7 @@ def post_fb(path, cap):
             process_status = stat.get('status', {}).get('processing_phase', {}).get('status')
             
             if upload_status == 'complete' and process_status == 'complete':
-                log("FB", "Processing Done. Publishing...")
+                log("FB", "Ready. Publishing...")
                 fin = requests.post(f"https://graph.facebook.com/v18.0/{FB_PAGE_ID}/video_reels", data={"upload_phase":"finish", "video_id": vid_id, "video_state":"PUBLISHED", "description": cap, "access_token": FB_ACCESS_TOKEN}).json()
                 return fin.get('success', False)
                 
@@ -327,7 +395,10 @@ def send_telegram(msg):
 
 if __name__ == "__main__":
     ensure_assets()
-    log("SYS", "Warlord V17 Online")
+    log("SYS", "Shadow Syndicate V18 Online")
+    
+    # 1. HUMAN HESITATION (Wait before starting)
+    time.sleep(random.randint(5, 30))
     
     news_list = fetch_news()
     if not news_list:
@@ -342,11 +413,14 @@ if __name__ == "__main__":
             video_path = render_video(target, data)
             
             if video_path and os.path.exists(video_path):
+                # HUMAN HESITATION (Wait before upload)
+                time.sleep(random.randint(2, 10))
+                
                 ig = post_ig(video_path, cap)
                 fb = post_fb(video_path, cap)
                 yt = post_yt(video_path, data['headline'], cap)
                 
-                status_msg = f"⚔️ Posted: {data['headline']}\nIG:{ig} FB:{fb} YT:{yt}"
+                status_msg = f"🏴‍☠️ Posted: {data['headline']}\nIG:{ig} FB:{fb} YT:{yt}"
                 log("SUCCESS", status_msg)
                 send_telegram(status_msg)
                 
