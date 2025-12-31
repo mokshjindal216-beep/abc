@@ -45,9 +45,35 @@ def ensure_ghost_assets():
     if not os.path.exists("Anton.ttf"): 
         os.system("wget -q -O Anton.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf")
 
-# --- INTELLIGENCE ---
+# --- INTELLIGENCE (DYNAMIC MODEL FIX) ---
 def get_groq_model(client):
-    return random.choice(["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "llama3-70b-8192"])
+    """
+    Asks Groq API for list of active models and picks the best one.
+    Prevents 'model decommissioned' errors.
+    """
+    try:
+        # 1. Fetch live models from API
+        models = client.models.list()
+        active_ids = [m.id for m in models.data]
+        
+        # 2. Priority List (Newest first)
+        priority = [
+            "llama-3.3-70b-versatile", 
+            "llama-3.1-70b-versatile", 
+            "llama3-70b-8192", 
+            "mixtral-8x7b-32768"
+        ]
+        
+        # 3. Match Priority to Active
+        for p in priority:
+            if p in active_ids:
+                return p
+        
+        # 4. Fallback: Return first valid one if none match
+        return active_ids[0]
+    except:
+        # If API fails, default to current stable
+        return "llama-3.3-70b-versatile"
 
 def is_toxic_content(title):
     t = title.lower()
@@ -80,6 +106,8 @@ def fetch_fresh_news():
 
 def analyze_story(art):
     client = Groq(api_key=GROQ_API_KEY)
+    active_model = get_groq_model(client) # DYNAMICALLY FETCHED
+    
     try:
         with DDGS() as ddgs: 
             res = ddgs.text(art['title'], max_results=1)
@@ -94,11 +122,12 @@ def analyze_story(art):
         f"- 'body' (One clear, objective sentence. Max 15 words.)"
     )
     try:
-        raw = client.chat.completions.create(messages=[{"role":"user","content":sys_msg}], model=get_groq_model(client), response_format={"type": "json_object"}).choices[0].message.content
+        raw = client.chat.completions.create(messages=[{"role":"user","content":sys_msg}], model=active_model, response_format={"type": "json_object"}).choices[0].message.content
         data = json.loads(raw)
     except: data = {"mood": "CALM", "headline": "BREAKING NEWS", "body": art['title']}
 
-    cap = client.chat.completions.create(messages=[{"role":"user","content":f"Caption for: {art['title']}. Start with 'Source: {art['source']['name']}'. End with 10 relevant hashtags."}], model="llama3-70b-8192").choices[0].message.content.strip()
+    # FIXED: Uses active_model instead of hardcoded string
+    cap = client.chat.completions.create(messages=[{"role":"user","content":f"Caption for: {art['title']}. Start with 'Source: {art['source']['name']}'. End with 10 relevant hashtags."}], model=active_model).choices[0].message.content.strip()
     return data, cap
 
 # --- RENDERER ---
