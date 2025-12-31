@@ -64,7 +64,7 @@ def get_best_groq_model(client):
 
 def is_garbage(title):
     t = title.lower()
-    ads = ["gift guide", "buying guide", "deals", "save $", "shop", "top picks", "review", "best of"]
+    ads = ["gift guide", "buying guide", "deals", "opinion", "editorial", "watch:", "letter to", "horoscope", "perspective", "analysis", "save $", "shop", "top picks", "review", "best of"]
     if any(x in t for x in ads): return True
     if not os.path.exists("history_v2.txt"): return False
     with open("history_v2.txt", "r") as f:
