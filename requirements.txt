@@ -1,12 +1,10 @@
-google-api-python-client
-google-auth-oauthlib
-google-auth-httplib2
-requests
 moviepy==1.0.3
+numpy==1.24.3
 cloudinary
 groq
 newspaper3k
 duckduckgo-search
+google-auth
+google-api-python-client
+requests
 pillow
-numpy
-lxml_html_clean
